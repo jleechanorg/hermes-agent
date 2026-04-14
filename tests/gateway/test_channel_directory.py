@@ -123,6 +123,21 @@ class TestResolveChannelName:
         with self._setup(tmp_path, platforms):
             assert resolve_channel_name("slack", "eng") is None
 
+    def test_slack_raw_channel_id_not_remapped_to_session_label(self, tmp_path):
+        """Cron deliver=slack:C0… must not become slack:C0…:thread_ts via prefix rules."""
+        platforms = {
+            "slack": [
+                {
+                    "id": "C0AMM2B4319:1776131235.765479",
+                    "name": "C0AMM2B4319 / topic 1776131235.765479",
+                    "type": "group",
+                    "thread_id": "1776131235.765479",
+                },
+            ]
+        }
+        with self._setup(tmp_path, platforms):
+            assert resolve_channel_name("slack", "C0AMM2B4319") is None
+
     def test_no_channels_returns_none(self, tmp_path):
         with self._setup(tmp_path, {}):
             assert resolve_channel_name("telegram", "someone") is None

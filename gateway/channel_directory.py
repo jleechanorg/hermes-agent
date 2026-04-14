@@ -8,6 +8,7 @@ action="list" and for resolving human-friendly channel names to numeric IDs.
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -200,6 +201,16 @@ def resolve_channel_name(platform_name: str, name: str) -> Optional[str]:
     - Telegram: display name or group name
     - Slack: "engineering", "#engineering"
     """
+    # Slack channel / DM IDs are already API-ready (C… public/private, D… IM, G… mpim).
+    # Never remap them via the directory: partial-prefix matching on display names
+    # like "C0AMM2B4319 / topic …" would replace a bare channel id with the
+    # session composite "C0AMM2B4319:thread_ts", which chat.postMessage rejects
+    # (channel_not_found).
+    if platform_name == "slack":
+        stripped = name.strip()
+        if re.fullmatch(r"[CDG][A-Z0-9]+", stripped, flags=re.IGNORECASE):
+            return None
+
     directory = load_directory()
     channels = directory.get("platforms", {}).get(platform_name, [])
     if not channels:
