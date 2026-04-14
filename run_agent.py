@@ -1256,6 +1256,35 @@ class AIAgent:
         except Exception:
             pass
 
+        # LLM wiki: optional rg-based prefetch merged with mem0 prefetch (same fence)
+        self._wiki_prefetch_enabled = False
+        self._wiki_prefetch_path: Optional[Path] = None
+        self._wiki_prefetch_max_chars = 8000
+        self._wiki_prefetch_max_files = 12
+        self._wiki_prefetch_timeout = 4.0
+        try:
+            _wiki_cfg = (
+                (_agent_cfg.get("skills") or {}).get("config") or {}
+            ).get("wiki")
+            if isinstance(_wiki_cfg, dict):
+                self._wiki_prefetch_enabled = bool(_wiki_cfg.get("prefetch", False))
+                _wp = str(_wiki_cfg.get("path") or "").strip()
+                if _wp:
+                    self._wiki_prefetch_path = Path(
+                        os.path.expanduser(os.path.expandvars(_wp))
+                    ).resolve()
+                self._wiki_prefetch_max_chars = max(
+                    500, int(_wiki_cfg.get("prefetch_max_chars", 8000))
+                )
+                self._wiki_prefetch_max_files = max(
+                    1, min(40, int(_wiki_cfg.get("prefetch_max_files", 12)))
+                )
+                self._wiki_prefetch_timeout = max(
+                    0.5, float(_wiki_cfg.get("prefetch_timeout_sec", 4.0))
+                )
+        except Exception:
+            pass
+
         # Tool-use enforcement config: "auto" (default — matches hardcoded
         # model list), true (always), false (never), or list of substrings.
         _agent_section = _agent_cfg.get("agent", {})
@@ -8088,10 +8117,33 @@ class AIAgent:
         # Use original_user_message (clean input) — user_message may contain
         # injected skill content that bloats / breaks provider queries.
         _ext_prefetch_cache = ""
+        _query = original_user_message if isinstance(original_user_message, str) else ""
         if self._memory_manager:
             try:
-                _query = original_user_message if isinstance(original_user_message, str) else ""
                 _ext_prefetch_cache = self._memory_manager.prefetch_all(_query) or ""
+            except Exception:
+                pass
+        if (
+            getattr(self, "_wiki_prefetch_enabled", False)
+            and getattr(self, "_wiki_prefetch_path", None)
+            and _query.strip()
+        ):
+            try:
+                from agent.wiki_prefetch import prefetch_wiki_context
+
+                _wiki_txt = prefetch_wiki_context(
+                    _query,
+                    self._wiki_prefetch_path,
+                    max_chars=int(self._wiki_prefetch_max_chars),
+                    max_files=int(self._wiki_prefetch_max_files),
+                    timeout_sec=float(self._wiki_prefetch_timeout),
+                )
+                if _wiki_txt:
+                    _ext_prefetch_cache = (
+                        (_ext_prefetch_cache + "\n\n" + _wiki_txt).strip()
+                        if _ext_prefetch_cache
+                        else _wiki_txt
+                    )
             except Exception:
                 pass
 
