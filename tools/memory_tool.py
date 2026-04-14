@@ -374,6 +374,12 @@ class MemoryStore:
         else:
             header = f"MEMORY (your personal notes) [{pct}% — {current:,}/{limit:,} chars]"
 
+        # Truncate content to fit within limit, using head+tail to preserve context
+        if current > limit:
+            head_chars = int(limit * 0.7)
+            tail_chars = int(limit * 0.2)
+            content = content[:head_chars] + f"\n\n[... truncated memory: kept {head_chars}+{tail_chars} of {current:,} chars ...]\n\n" + content[-tail_chars:]
+
         separator = "═" * 46
         return f"{separator}\n{header}\n{separator}\n{content}"
 
