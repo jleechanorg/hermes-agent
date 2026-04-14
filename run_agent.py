@@ -1768,6 +1768,12 @@ class AIAgent:
         """Emit rough token buckets when ``log_context_breakdown`` is enabled."""
         if not getattr(self, "log_context_breakdown", False):
             return
+        # DEBUG: log raw system prompt size to diagnose context bloat
+        _sys_raw = ""
+        if api_messages and api_messages[0].get("role") == "system":
+            _sys_raw = api_messages[0].get("content", "")
+            _sys_type = type(_sys_raw).__name__
+            logging.warning(f"{self.log_prefix}[DEBUG] system_prompt raw len={len(_sys_raw):,} type={_sys_type} first200={repr(_sys_raw[:200])}")
         bd = estimate_context_breakdown_rough(api_messages, tools=self.tools)
         att = ""
         if compression_attempt is not None and max_attempts is not None:
