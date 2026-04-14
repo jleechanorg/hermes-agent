@@ -20,7 +20,9 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
@@ -31,6 +33,59 @@ logger = logging.getLogger(__name__)
 # for _BREAKER_COOLDOWN_SECS to avoid hammering a down server.
 _BREAKER_THRESHOLD = 5
 _BREAKER_COOLDOWN_SECS = 120
+
+
+# ---------------------------------------------------------------------------
+# Local REST client (for self-hosted Mem0 via mem0_server.py)
+# ---------------------------------------------------------------------------
+
+class _LocalMem0Client:
+    """Lightweight REST client for the local mem0_server.py FastAPI server.
+
+    Wraps the local endpoints so the rest of the plugin sees the same
+    interface as ``MemoryClient`` (cloud).
+    """
+
+    def __init__(self, base_url: str, api_key: str, user_id: str):
+        self._base = base_url.rstrip("/")
+        self._headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        self._user_id = user_id
+
+    def _post(self, path: str, body: dict) -> dict:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(f"{self._base}{path}", json=body, headers=self._headers)
+            resp.raise_for_status()
+            return resp.json()
+
+    def _get(self, path: str, params: Optional[dict] = None) -> dict:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(f"{self._base}{path}", params=params, headers=self._headers)
+            resp.raise_for_status()
+            return resp.json()
+
+    # -------------------------------------------------------------------------
+    # Surface — matches MemoryClient method signatures
+    # -------------------------------------------------------------------------
+
+    def search(self, query: str, filters: Optional[dict] = None,
+               rerank: bool = False, top_k: int = 10) -> dict:
+        body = {"query": query, "limit": top_k, "rerank": rerank, "user_id": self._user_id}
+        if filters:
+            body["filters"] = filters
+        return self._post("/search", body)
+
+    def get_all(self, filters: Optional[dict] = None) -> dict:
+        params = {"user_id": self._user_id}
+        if filters:
+            params.update(filters)
+        return self._get("/memories", params)
+
+    def add(self, messages: List[dict], **kwargs) -> dict:
+        body = {"messages": messages, "user_id": self._user_id}
+        for k in ("agent_id", "run_id"):
+            if k in kwargs:
+                body[k] = kwargs[k]
+        return self._post("/memories", body)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +179,7 @@ class Mem0MemoryProvider(MemoryProvider):
         self._client = None
         self._client_lock = threading.Lock()
         self._api_key = ""
+        self._host = None
         self._user_id = "hermes-user"
         self._agent_id = "hermes"
         self._rerank = True
@@ -166,16 +222,23 @@ class Mem0MemoryProvider(MemoryProvider):
         ]
 
     def _get_client(self):
-        """Thread-safe client accessor with lazy initialization."""
+        """Thread-safe client accessor with lazy initialization.
+
+        When ``self._host`` is set (local server), uses an httpx-based local client.
+        Otherwise falls back to ``MemoryClient`` (Mem0 cloud).
+        """
         with self._client_lock:
             if self._client is not None:
                 return self._client
-            try:
-                from mem0 import MemoryClient
-                self._client = MemoryClient(api_key=self._api_key)
-                return self._client
-            except ImportError:
-                raise RuntimeError("mem0 package not installed. Run: pip install mem0ai")
+            if self._host:
+                self._client = _LocalMem0Client(self._host, self._api_key, self._user_id)
+            else:
+                try:
+                    from mem0 import MemoryClient
+                    self._client = MemoryClient(api_key=self._api_key)
+                except ImportError:
+                    raise RuntimeError("mem0 package not installed. Run: pip install mem0ai")
+            return self._client
 
     def _is_breaker_open(self) -> bool:
         """Return True if the circuit breaker is tripped (too many failures)."""
@@ -203,6 +266,7 @@ class Mem0MemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._config = _load_config()
         self._api_key = self._config.get("api_key", "")
+        self._host = self._config.get("host")
         # Prefer gateway-provided user_id for per-user memory scoping;
         # fall back to config/env default for CLI (single-user) sessions.
         self._user_id = kwargs.get("user_id") or self._config.get("user_id", "hermes-user")
@@ -231,7 +295,14 @@ class Mem0MemoryProvider(MemoryProvider):
             "# Mem0 Memory\n"
             f"Active. User: {self._user_id}.\n"
             "Use mem0_search to find memories, mem0_conclude to store facts, "
-            "mem0_profile for a full overview."
+            "mem0_profile for a full overview.\n\n"
+            "IMPORTANT — memory acknowledgment in every response:\n"
+            "- When <memory-context> blocks are present (memories were injected), "
+            "BEGIN your response with: 'Memory: used — [1-sentence summary of what you found or actioned].'\n"
+            "- When no <memory-context> block is present, "
+            "BEGIN your response with: 'Memory: none.'\n"
+            "- If you called mem0_search or mem0_profile and got results, "
+            "still follow the rule above based on whether <memory-context> appears."
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
