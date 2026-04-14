@@ -681,7 +681,11 @@ DEFAULT_CONFIG = {
     "diagnostics": {
         # When true, on context-overflow compression Hermes logs rough token buckets:
         # system vs conversation messages vs tool JSON schemas, plus per-role counts.
+        # Also writes one JSON file per event under context_breakdown_log_dir (see below).
         "log_context_breakdown": False,
+        # Directory for per-event JSON artifacts. Empty = /tmp/hermes-context-breakdown
+        # unless HERMES_CONTEXT_BREAKDOWN_LOG_DIR is set.
+        "context_breakdown_log_dir": "",
     },
 
     "cron": {

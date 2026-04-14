@@ -40,7 +40,7 @@ import uuid
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 import fire
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
@@ -608,6 +608,7 @@ class AIAgent:
         pass_session_id: bool = False,
         persist_session: bool = True,
         log_context_breakdown: bool = False,
+        context_breakdown_log_dir: str | None = None,
     ):
         """
         Initialize the AI Agent.
@@ -648,9 +649,12 @@ class AIAgent:
                 into the system prompt. Use this for batch processing and data generation to avoid
                 polluting trajectories with user-specific persona or project instructions.
             log_context_breakdown (bool): When True, emit structured rough token buckets (system /
-                messages-by-role / tool schemas) to logs and the status sink when context
-                overflow compression runs. Configure via ``diagnostics.log_context_breakdown``
-                in gateway ``config.yaml``.
+                messages-by-role / tool schemas) to logs, the status sink, and a JSON file under
+                ``/tmp/hermes-context-breakdown`` (or ``diagnostics.context_breakdown_log_dir`` /
+                ``HERMES_CONTEXT_BREAKDOWN_LOG_DIR``) when context overflow compression runs.
+                Configure via ``diagnostics.log_context_breakdown`` in gateway ``config.yaml``.
+            context_breakdown_log_dir (str): Directory for JSON breakdown artifacts. Empty /
+                None uses ``HERMES_CONTEXT_BREAKDOWN_LOG_DIR`` or ``/tmp/hermes-context-breakdown``.
         """
         _install_safe_stdio()
 
@@ -676,6 +680,9 @@ class AIAgent:
         self.pass_session_id = pass_session_id
         self.persist_session = persist_session
         self.log_context_breakdown = bool(log_context_breakdown)
+        self.context_breakdown_log_dir = (
+            (context_breakdown_log_dir or "").strip() or None
+        )
         self._credential_pool = credential_pool
         self.log_prefix_chars = log_prefix_chars
         self.log_prefix = f"{log_prefix} " if log_prefix else ""
@@ -1746,6 +1753,36 @@ class AIAgent:
         )
         logging.info(line)
         self._vprint(line, force=True)
+
+        _log_root = (
+            (getattr(self, "context_breakdown_log_dir", None) or "").strip()
+            or os.environ.get("HERMES_CONTEXT_BREAKDOWN_LOG_DIR", "").strip()
+            or "/tmp/hermes-context-breakdown"
+        )
+        try:
+            _dir = Path(_log_root)
+            _dir.mkdir(parents=True, exist_ok=True)
+            _ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
+            _sid = str(self.session_id or "nosession").replace("/", "_")[:96]
+            _safe_reason = re.sub(r"[^a-zA-Z0-9._-]+", "_", reason)[:64]
+            _path = _dir / f"{_ts}_{_sid}_{_safe_reason}.json"
+            _record = {
+                "ts_utc": datetime.now(timezone.utc).isoformat(),
+                "reason": reason,
+                "session_id": self.session_id,
+                "model": self.model,
+                "provider": self.provider,
+                "compression_attempt": compression_attempt,
+                "max_attempts": max_attempts,
+                "line_approx_tokens": approx_tokens_line,
+                "breakdown": bd,
+                "summary_line": line.strip(),
+                "log_dir": _log_root,
+                "artifact_path": str(_path),
+            }
+            _path.write_text(json.dumps(_record, indent=2, default=str), encoding="utf-8")
+        except OSError as _e:
+            logging.warning("%sCould not write context breakdown to %s: %s", self.log_prefix, _log_root, _e)
 
     def _should_start_quiet_spinner(self) -> bool:
         """Return True when quiet-mode spinner output has a safe sink.
