@@ -52,6 +52,36 @@ class TestPlatformConfigRoundtrip:
         assert restored.enabled is False
         assert restored.token is None
 
+    def test_unknown_top_level_keys_emit_warning(self, caplog):
+        """Regression test: unknown top-level keys like `port` (instead of `extra.port`)
+        must emit a warning so misconfigured YAML does not silently do nothing.
+
+        Previously PlatformConfig.from_dict() silently dropped unknown keys, so:
+            platforms:
+              api_server:
+                port: 8642    # WRONG — goes in extra.port
+        was completely ignored with no indication of the error.
+        """
+        import logging
+        caplog.set_level(logging.WARNING)
+
+        cfg = PlatformConfig.from_dict({
+            "enabled": True,
+            "token": "xoxb-fake",
+            "port": 8642,          # unknown top-level key — should warn
+            "extra": {"other": 1},
+        })
+
+        # The config must still be created (not crash) but a warning MUST be emitted
+        assert cfg.enabled is True
+        assert cfg.token == "xoxb-fake"
+        assert cfg.extra == {"other": 1}
+
+        warnings = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("port" in w or "unknown" in w.lower() for w in warnings), (
+            f"Expected warning about unknown key 'port', got: {warnings}"
+        )
+
 
 class TestGetConnectedPlatforms:
     def test_returns_enabled_with_token(self):

@@ -170,12 +170,32 @@ class PlatformConfig:
             result["home_channel"] = self.home_channel.to_dict()
         return result
     
+    # Keys that are valid at the top level of a platform config dict.
+    # Any other key is treated as a misconfiguration and emits a warning.
+    _VALID_KEYS = frozenset({"enabled", "token", "api_key", "home_channel", "reply_to_mode", "extra"})
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PlatformConfig":
+        import logging
+        logger = logging.getLogger(__name__)
+
+        unknown = set(data.keys()) - cls._VALID_KEYS
+        if unknown:
+            # Emit a warning so YAML misconfiguration is visible, not silent.
+            # Example: `port: 8642` instead of `extra: {port: 8642}` will now
+            # produce "Unknown platform config keys: {'port'}; did you mean to
+            # nest them under `extra:`?".
+            logger.warning(
+                "Unknown platform config keys: %s; "
+                "did you mean to nest them under `extra:`? "
+                "Top-level keys are silently ignored.",
+                unknown,
+            )
+
         home_channel = None
         if "home_channel" in data:
             home_channel = HomeChannel.from_dict(data["home_channel"])
-        
+
         return cls(
             enabled=data.get("enabled", False),
             token=data.get("token"),
