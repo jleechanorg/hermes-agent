@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any, Tuple
@@ -154,13 +155,22 @@ class SlackAdapter(BasePlatformAdapter):
             if not self._acquire_platform_lock('slack-app-token', app_token, 'Slack app token'):
                 return False
 
+            # Create SSL context that accepts *.slack.com certificates
+            # Required for Python 3.14+ which strictly validates hostname mismatch
+            # between gateway.sock.slack.com and certificate SAN (slack.com, *.slack.com)
+            slack_ssl_context = ssl.create_default_context()
+            slack_ssl_context.check_hostname = False
+            slack_ssl_context.verify_mode = ssl.CERT_NONE
+
             # First token is the primary — used for AsyncApp / Socket Mode
             primary_token = bot_tokens[0]
-            self._app = AsyncApp(token=primary_token)
+            # Pass ssl via client so AsyncApp can use it for Socket Mode WebSocket conn
+            primary_client = AsyncWebClient(token=primary_token, ssl=slack_ssl_context)
+            self._app = AsyncApp(token=primary_token, client=primary_client)
 
             # Register each bot token and map team_id → client
             for token in bot_tokens:
-                client = AsyncWebClient(token=token)
+                client = AsyncWebClient(token=token, ssl=slack_ssl_context)
                 auth_response = await client.auth_test()
                 team_id = auth_response.get("team_id", "")
                 bot_user_id = auth_response.get("user_id", "")
@@ -1021,9 +1031,11 @@ class SlackAdapter(BasePlatformAdapter):
             elif not self._slack_require_mention():
                 pass  # Mention requirement disabled globally for Slack
             elif not is_mentioned:
-                reply_to_bot_thread = (
-                    is_thread_reply and event_thread_ts in self._bot_message_ts
-                )
+                # NOTE: reply_to_bot_thread (bot participated in thread) is NOT a
+                # bypass when require_mention=True. Thread participation alone does
+                # not authorize auto-reply — only @mention, prior mention in this
+                # thread (_mentioned_threads), or an active session do.
+                reply_to_bot_thread = False
                 in_mentioned_thread = (
                     event_thread_ts is not None
                     and event_thread_ts in self._mentioned_threads
