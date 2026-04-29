@@ -327,10 +327,22 @@ def auth_remove_command(args) -> None:
     # If this was a singleton-seeded credential (OAuth device_code, hermes_pkce),
     # clear the underlying auth store / credential file so it doesn't get
     # re-seeded on the next load_pool() call.
-    elif removed.source == "device_code" and provider in ("openai-codex", "nous"):
+    elif (
+        removed.source.split(":", 1)[-1] == "device_code"
+        and provider in ("openai-codex", "nous")
+    ):
         from hermes_cli.auth import (
             _load_auth_store, _save_auth_store, _auth_store_lock,
+            suppress_credential_source,
         )
+        from agent.credential_pool import write_credential_pool
+        suppress_credential_source(provider, "device_code")
+        remaining = [
+            entry.to_dict()
+            for entry in pool.entries()
+            if entry.source != "device_code"
+        ]
+        write_credential_pool(provider, remaining)
         with _auth_store_lock():
             auth_store = _load_auth_store()
             providers_dict = auth_store.get("providers")

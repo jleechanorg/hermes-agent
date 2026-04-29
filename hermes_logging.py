@@ -78,6 +78,12 @@ def set_session_context(session_id: str) -> None:
     _session_context.session_id = session_id
 
 
+def clear_session_context() -> None:
+    """Clear the session ID for the current thread."""
+    if hasattr(_session_context, "session_id"):
+        delattr(_session_context, "session_id")
+
+
 
 # ---------------------------------------------------------------------------
 # Record factory — injects session_tag into every LogRecord at creation
@@ -360,6 +366,8 @@ def _add_rotating_handler(
     if log_filter is not None:
         handler.addFilter(log_filter)
     logger.addHandler(handler)
+    if logger.level == logging.NOTSET or logger.level > level:
+        logger.setLevel(level)
 
 
 def _read_logging_config():

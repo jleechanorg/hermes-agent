@@ -5,7 +5,9 @@ Follows the same pattern as test_whatsapp_group_gating.py.
 """
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from gateway.config import Platform, PlatformConfig
 
@@ -251,6 +253,100 @@ def test_thread_reply_without_active_session_ignored():
         adapter, text="followup",
         thread_reply=True, active_session=False,
     ) is False
+
+@pytest.mark.asyncio
+async def test_thread_reply_fetches_context_even_with_active_session():
+    """Slack thread context must come from Slack, not local session-cache state."""
+    adapter = _make_adapter(require_mention=True)
+    adapter._dedup = MagicMock()
+    adapter._dedup.is_duplicate.return_value = False
+    adapter._assistant_threads = {}
+    adapter._channel_team = {}
+    adapter._mentioned_threads = set()
+
+    async def fake_fetch_thread_context(**kwargs):
+        assert kwargs["thread_ts"] == "111.000"
+        assert kwargs["current_ts"] == "222.000"
+        return "[Thread context]\nparent task\n[End]\n\n"
+
+    captured = {}
+
+    async def fake_handle_message(msg_event):
+        captured["text"] = msg_event.text
+
+    async def fake_resolve_user_name(user_id, chat_id=""):
+        return "Jeffrey"
+
+    adapter._fetch_thread_context = fake_fetch_thread_context
+    adapter._has_active_session_for_thread = MagicMock(return_value=True)
+    adapter._resolve_user_name = fake_resolve_user_name
+    adapter.handle_message = fake_handle_message
+
+    await adapter._handle_slack_message({
+        "type": "message",
+        "channel": CHANNEL_ID,
+        "channel_type": "channel",
+        "team": "T1",
+        "user": "U_USER",
+        "text": "Status on the worker",
+        "thread_ts": "111.000",
+        "ts": "222.000",
+    })
+
+    assert captured["text"].startswith("[Thread context]\nparent task")
+    assert captured["text"].endswith("Status on the worker")
+
+
+@pytest.mark.asyncio
+async def test_thread_context_includes_prior_bot_messages():
+    """Prior bot replies can contain task/session IDs needed for follow-ups."""
+    adapter = _make_adapter(require_mention=True)
+    adapter._app = MagicMock()
+    adapter._app.client.conversations_replies = AsyncMock()
+    adapter._app.client.conversations_replies.return_value = {
+        "messages": [
+            {
+                "ts": "111.000",
+                "user": "U_USER",
+                "text": "Make an AO worker",
+            },
+            {
+                "ts": "111.100",
+                "user": BOT_USER_ID,
+                "bot_id": "B_HERMES",
+                "subtype": "bot_message",
+                "bot_profile": {"name": "hermes"},
+                "text": "Session wa-1514 created.",
+            },
+            {
+                "ts": "222.000",
+                "user": "U_USER",
+                "text": "Status on the worker",
+            },
+        ],
+    }
+    adapter._thread_context_cache = {}
+    adapter._THREAD_CACHE_TTL = 60.0
+    adapter._channel_team = {}
+    adapter._team_clients = {}
+    adapter._team_bot_user_ids = {}
+    adapter._bot_user_id = BOT_USER_ID
+
+    async def fake_resolve_user_name(user_id, chat_id=""):
+        return "Jeffrey"
+
+    adapter._resolve_user_name = fake_resolve_user_name
+
+    context = await adapter._fetch_thread_context(
+        channel_id=CHANNEL_ID,
+        thread_ts="111.000",
+        current_ts="222.000",
+        team_id="T1",
+    )
+
+    assert "Jeffrey: Make an AO worker" in context
+    assert "hermes: Session wa-1514 created." in context
+    assert "Status on the worker" not in context
 
 
 def test_bot_uid_none_processes_channel_message():

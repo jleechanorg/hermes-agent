@@ -868,7 +868,8 @@ class GatewayRunner:
                 resolved_session_key = None
 
         model = _resolve_gateway_model(user_config)
-        override = self._session_model_overrides.get(resolved_session_key) if resolved_session_key else None
+        session_model_overrides = getattr(self, "_session_model_overrides", {})
+        override = session_model_overrides.get(resolved_session_key) if resolved_session_key else None
         if override:
             override_model = override.get("model", model)
             override_runtime = {
@@ -894,7 +895,7 @@ class GatewayRunner:
             logger.debug(
                 "No session model override: session=%s config_model=%s override_keys=%s",
                 (resolved_session_key or "")[:30], model,
-                list(self._session_model_overrides.keys())[:5] if self._session_model_overrides else "[]",
+                list(session_model_overrides.keys())[:5] if session_model_overrides else "[]",
             )
 
         runtime_kwargs = _resolve_runtime_agent_kwargs()
@@ -2390,7 +2391,7 @@ class GatewayRunner:
         # are system-generated and must skip user authorization.
         if getattr(event, "internal", False):
             pass
-        elif source.user_id is None:
+        elif source.user_id is None and not self._is_user_authorized(source):
             # Messages with no user identity (Telegram service messages,
             # channel forwards, anonymous admin actions) cannot be
             # authorized — drop silently instead of triggering the pairing
@@ -4170,7 +4171,7 @@ class GatewayRunner:
         # restarts us.  The detached subprocess approach (setsid + bash)
         # doesn't work under systemd because KillMode=mixed kills all
         # processes in the cgroup, including the detached helper.
-        _under_service = bool(os.environ.get("INVOCATION_ID"))  # systemd sets this
+        _under_service = bool(os.environ.get("INVOCATION_ID")) and not active_agents  # systemd sets this
         if _under_service:
             self.request_restart(detached=False, via_service=True)
         else:

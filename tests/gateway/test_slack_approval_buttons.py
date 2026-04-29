@@ -275,13 +275,19 @@ class TestSlackThreadContext:
         assert "<@U_BOT>" not in context
 
     @pytest.mark.asyncio
-    async def test_skips_bot_messages(self):
+    async def test_includes_bot_messages(self):
         adapter = _make_adapter()
         mock_client = adapter._team_clients["T1"]
         mock_client.conversations_replies = AsyncMock(return_value={
             "messages": [
                 {"ts": "1000.0", "user": "U1", "text": "Parent"},
-                {"ts": "1000.1", "bot_id": "B1", "text": "Bot reply (should be skipped)"},
+                {
+                    "ts": "1000.1",
+                    "bot_id": "B1",
+                    "subtype": "bot_message",
+                    "bot_profile": {"name": "hermes"},
+                    "text": "Bot reply with session wa-1514",
+                },
                 {"ts": "1000.2", "user": "U1", "text": "Current"},
             ]
         })
@@ -291,8 +297,28 @@ class TestSlackThreadContext:
             channel_id="C1", thread_ts="1000.0", current_ts="1000.2", team_id="T1"
         )
 
-        assert "Bot reply" not in context
+        assert "hermes: Bot reply with session wa-1514" in context
         assert "Alice: Parent" in context
+
+    @pytest.mark.asyncio
+    async def test_skips_empty_context_after_bot_mention_stripping(self):
+        adapter = _make_adapter()
+        mock_client = adapter._team_clients["T1"]
+        mock_client.conversations_replies = AsyncMock(return_value={
+            "messages": [
+                {"ts": "1000.0", "user": "U1", "text": "Parent"},
+                {"ts": "1000.1", "user": "U1", "text": "<@U_BOT>"},
+                {"ts": "1000.2", "user": "U1", "text": "Current"},
+            ]
+        })
+        adapter._user_name_cache = {"U1": "Alice"}
+
+        context = await adapter._fetch_thread_context(
+            channel_id="C1", thread_ts="1000.0", current_ts="1000.2", team_id="T1"
+        )
+
+        assert "Alice: Parent" in context
+        assert "Alice: \n" not in context
 
     @pytest.mark.asyncio
     async def test_empty_thread(self):

@@ -929,7 +929,7 @@ def list_authenticated_providers(
             "is_user_defined": False,
             "models": top,
             "total_models": total,
-            "source": "hermes",
+            "source": "built-in" if hermes_slug == "opencode-go" else "hermes",
         })
         seen_slugs.add(pid)
         seen_slugs.add(hermes_slug)
@@ -1082,5 +1082,4 @@ def list_authenticated_providers(
     results.sort(key=lambda r: (not r["is_current"], -r["total_models"]))
 
     return results
-
 
