@@ -7,6 +7,8 @@ Follows the same pattern as test_whatsapp_group_gating.py.
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 from gateway.config import Platform, PlatformConfig
 
 
@@ -251,6 +253,48 @@ def test_thread_reply_without_active_session_ignored():
         adapter, text="followup",
         thread_reply=True, active_session=False,
     ) is False
+
+@pytest.mark.asyncio
+async def test_thread_reply_fetches_context_even_with_active_session():
+    """Slack thread context must come from Slack, not local session-cache state."""
+    adapter = _make_adapter(require_mention=True)
+    adapter._dedup = MagicMock()
+    adapter._dedup.is_duplicate.return_value = False
+    adapter._assistant_threads = {}
+    adapter._channel_team = {}
+    adapter._mentioned_threads = set()
+
+    async def fake_fetch_thread_context(**kwargs):
+        assert kwargs["thread_ts"] == "111.000"
+        assert kwargs["current_ts"] == "222.000"
+        return "[Thread context]\nparent task\n[End]\n\n"
+
+    captured = {}
+
+    async def fake_handle_message(msg_event):
+        captured["text"] = msg_event.text
+
+    async def fake_resolve_user_name(user_id, chat_id=""):
+        return "Jeffrey"
+
+    adapter._fetch_thread_context = fake_fetch_thread_context
+    adapter._has_active_session_for_thread = MagicMock(return_value=True)
+    adapter._resolve_user_name = fake_resolve_user_name
+    adapter.handle_message = fake_handle_message
+
+    await adapter._handle_slack_message({
+        "type": "message",
+        "channel": CHANNEL_ID,
+        "channel_type": "channel",
+        "team": "T1",
+        "user": "U_USER",
+        "text": "Status on the worker",
+        "thread_ts": "111.000",
+        "ts": "222.000",
+    })
+
+    assert captured["text"].startswith("[Thread context]\nparent task")
+    assert captured["text"].endswith("Status on the worker")
 
 
 def test_bot_uid_none_processes_channel_message():

@@ -1062,13 +1062,9 @@ class SlackAdapter(BasePlatformAdapter):
                     for t in to_remove:
                         self._mentioned_threads.discard(t)
 
-        # When entering a thread for the first time (no existing session),
-        # fetch thread context so the agent understands the conversation.
-        if is_thread_reply and not self._has_active_session_for_thread(
-            channel_id=channel_id,
-            thread_ts=event_thread_ts,
-            user_id=user_id,
-        ):
+        # Slack is the durable source of truth for thread history; local
+        # session state can be absent, stale, or compacted.
+        if is_thread_reply:
             thread_context = await self._fetch_thread_context(
                 channel_id=channel_id,
                 thread_ts=event_thread_ts,
@@ -1385,14 +1381,11 @@ class SlackAdapter(BasePlatformAdapter):
         self, channel_id: str, thread_ts: str, current_ts: str,
         team_id: str = "", limit: int = 30,
     ) -> str:
-        """Fetch recent thread messages to provide context when the bot is
-        mentioned mid-thread for the first time.
+        """Fetch recent Slack thread messages to provide durable context.
 
-        This method is only called when there is NO active session for the
-        thread (guarded at the call site by _has_active_session_for_thread).
-        That guard ensures thread messages are prepended only on the very
-        first turn — after that the session history already holds them, so
-        there is no duplication across subsequent turns.
+        Thread replies use Slack history regardless of local session presence:
+        gateway sessions can be missing, stale, or compacted, while Slack is
+        the durable source of truth for thread replies.
 
         Results are cached for _THREAD_CACHE_TTL seconds per thread to avoid
         hammering conversations.replies (Tier 3, ~50 req/min).
