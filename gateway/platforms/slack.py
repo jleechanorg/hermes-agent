@@ -1453,6 +1453,8 @@ class SlackAdapter(BasePlatformAdapter):
                 # Strip bot mentions from context messages
                 if bot_uid:
                     msg_text = msg_text.replace(f"<@{bot_uid}>", "").strip()
+                if not msg_text:
+                    continue
 
                 msg_user = msg.get("user") or msg.get("bot_id") or "unknown"
                 is_parent = msg_ts == thread_ts
@@ -1467,7 +1469,7 @@ class SlackAdapter(BasePlatformAdapter):
             content = ""
             if context_parts:
                 content = (
-                    "[Thread context — prior messages in this thread (not yet in conversation history):]\n"
+                    "[Thread context — prior Slack messages in this thread:]\n"
                     + "\n".join(context_parts)
                     + "\n[End of thread context]\n\n"
                 )
