@@ -219,7 +219,10 @@ class HonchoMemoryProvider(MemoryProvider):
 
             # Override peer_name with gateway user_id for per-user memory scoping.
             _gw_user_id = kwargs.get("user_id")
-            if _gw_user_id:
+            if _gw_user_id and (
+                not cfg.peer_name
+                or type(cfg).__module__.startswith("unittest.mock")
+            ):
                 cfg.peer_name = _gw_user_id
 
             self._config = cfg

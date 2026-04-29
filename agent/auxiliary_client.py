@@ -698,7 +698,11 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
             # as auxiliary fallback when the user's primary provider fails.
             try:
                 from hermes_cli.auth import is_provider_explicitly_configured
-                if not is_provider_explicitly_configured("anthropic"):
+                explicit_token = bool(
+                    os.getenv("ANTHROPIC_TOKEN", "").strip()
+                    or os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+                )
+                if not explicit_token and not is_provider_explicitly_configured("anthropic"):
                     continue
             except ImportError:
                 pass
