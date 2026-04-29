@@ -1446,10 +1446,6 @@ class SlackAdapter(BasePlatformAdapter):
                 # as the user message itself, so including it here would duplicate it.
                 if msg_ts == current_ts:
                     continue
-                # Exclude our own bot messages to avoid circular context.
-                if msg.get("bot_id") or msg.get("subtype") == "bot_message":
-                    continue
-
                 msg_text = msg.get("text", "").strip()
                 if not msg_text:
                     continue
@@ -1458,10 +1454,14 @@ class SlackAdapter(BasePlatformAdapter):
                 if bot_uid:
                     msg_text = msg_text.replace(f"<@{bot_uid}>", "").strip()
 
-                msg_user = msg.get("user", "unknown")
+                msg_user = msg.get("user") or msg.get("bot_id") or "unknown"
                 is_parent = msg_ts == thread_ts
                 prefix = "[thread parent] " if is_parent else ""
-                name = await self._resolve_user_name(msg_user, chat_id=channel_id)
+                if msg.get("bot_id") or msg.get("subtype") == "bot_message":
+                    profile = msg.get("bot_profile") or {}
+                    name = profile.get("name") or profile.get("app_name") or "bot"
+                else:
+                    name = await self._resolve_user_name(msg_user, chat_id=channel_id)
                 context_parts.append(f"{prefix}{name}: {msg_text}")
 
             content = ""
