@@ -5,7 +5,7 @@ Follows the same pattern as test_whatsapp_group_gating.py.
 """
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -295,6 +295,58 @@ async def test_thread_reply_fetches_context_even_with_active_session():
 
     assert captured["text"].startswith("[Thread context]\nparent task")
     assert captured["text"].endswith("Status on the worker")
+
+
+@pytest.mark.asyncio
+async def test_thread_context_includes_prior_bot_messages():
+    """Prior bot replies can contain task/session IDs needed for follow-ups."""
+    adapter = _make_adapter(require_mention=True)
+    adapter._app = MagicMock()
+    adapter._app.client.conversations_replies = AsyncMock()
+    adapter._app.client.conversations_replies.return_value = {
+        "messages": [
+            {
+                "ts": "111.000",
+                "user": "U_USER",
+                "text": "Make an AO worker",
+            },
+            {
+                "ts": "111.100",
+                "user": BOT_USER_ID,
+                "bot_id": "B_HERMES",
+                "subtype": "bot_message",
+                "bot_profile": {"name": "hermes"},
+                "text": "Session wa-1514 created.",
+            },
+            {
+                "ts": "222.000",
+                "user": "U_USER",
+                "text": "Status on the worker",
+            },
+        ],
+    }
+    adapter._thread_context_cache = {}
+    adapter._THREAD_CACHE_TTL = 60.0
+    adapter._channel_team = {}
+    adapter._team_clients = {}
+    adapter._team_bot_user_ids = {}
+    adapter._bot_user_id = BOT_USER_ID
+
+    async def fake_resolve_user_name(user_id, chat_id=""):
+        return "Jeffrey"
+
+    adapter._resolve_user_name = fake_resolve_user_name
+
+    context = await adapter._fetch_thread_context(
+        channel_id=CHANNEL_ID,
+        thread_ts="111.000",
+        current_ts="222.000",
+        team_id="T1",
+    )
+
+    assert "Jeffrey: Make an AO worker" in context
+    assert "hermes: Session wa-1514 created." in context
+    assert "Status on the worker" not in context
 
 
 def test_bot_uid_none_processes_channel_message():
