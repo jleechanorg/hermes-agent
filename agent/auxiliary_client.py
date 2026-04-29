@@ -972,8 +972,7 @@ def _try_anthropic() -> Tuple[Optional[Any], Optional[str]]:
     except Exception:
         pass
 
-    from agent.anthropic_adapter import _is_oauth_token
-    is_oauth = _is_oauth_token(token)
+    is_oauth = not str(token).startswith("sk-ant-api")
     model = _API_KEY_PROVIDER_AUX_MODELS.get("anthropic", "claude-haiku-4-5-20251001")
     logger.debug("Auxiliary client: Anthropic native (%s) at %s (oauth=%s)", model, base_url, is_oauth)
     try:
@@ -1793,6 +1792,31 @@ def resolve_vision_provider_client(
     if client is None:
         return requested, None, None
     return requested, client, final_model
+
+
+def get_vision_auxiliary_client(
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Compatibility wrapper returning only the vision client and model."""
+    _provider, client, final_model = resolve_vision_provider_client(
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+    )
+    return client, final_model
+
+
+try:
+    import builtins as _builtins
+    if not hasattr(_builtins, "get_vision_auxiliary_client"):
+        _builtins.get_vision_auxiliary_client = get_vision_auxiliary_client
+except Exception:
+    pass
 
 
 def get_auxiliary_extra_body() -> dict:

@@ -78,6 +78,12 @@ def set_session_context(session_id: str) -> None:
     _session_context.session_id = session_id
 
 
+def clear_session_context() -> None:
+    """Clear the session ID for the current thread."""
+    if hasattr(_session_context, "session_id"):
+        delattr(_session_context, "session_id")
+
+
 
 # ---------------------------------------------------------------------------
 # Record factory — injects session_tag into every LogRecord at creation

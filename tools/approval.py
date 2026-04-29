@@ -321,6 +321,18 @@ def is_session_yolo_enabled(session_key: str) -> bool:
         return session_key in _session_yolo
 
 
+def clear_session(session_key: str) -> None:
+    """Clear approval, pending, and YOLO state for a session."""
+    if not session_key:
+        return
+    with _lock:
+        _pending.pop(session_key, None)
+        _session_approved.pop(session_key, None)
+        _session_yolo.discard(session_key)
+        _gateway_queues.pop(session_key, None)
+        _gateway_notify_cbs.pop(session_key, None)
+
+
 def is_current_session_yolo_enabled() -> bool:
     """Return True when the active approval session has YOLO bypass enabled."""
     return is_session_yolo_enabled(get_current_session_key(default=""))
