@@ -49,7 +49,7 @@ _HERMES_CORE_TOOLS = [
     # Planning & memory
     "todo", "memory",
     # Session history search
-    "session_search",
+    "session_search", "conversations_history", "conversations_replies",
     # Clarifying questions
     "clarify",
     # Code execution + delegation
@@ -301,7 +301,7 @@ TOOLSETS = {
     
     "hermes-slack": {
         "description": "Slack bot toolset - full access for workspace use (terminal has safety checks)",
-        "tools": _HERMES_CORE_TOOLS + ["conversations_history", "conversations_replies"],
+        "tools": _HERMES_CORE_TOOLS,
         "includes": []
     },
     

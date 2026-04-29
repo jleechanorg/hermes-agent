@@ -4171,7 +4171,7 @@ class GatewayRunner:
         # restarts us.  The detached subprocess approach (setsid + bash)
         # doesn't work under systemd because KillMode=mixed kills all
         # processes in the cgroup, including the detached helper.
-        _under_service = bool(os.environ.get("INVOCATION_ID"))  # systemd sets this
+        _under_service = bool(os.environ.get("INVOCATION_ID")) and not active_agents  # systemd sets this
         if _under_service:
             self.request_restart(detached=False, via_service=True)
         else:
