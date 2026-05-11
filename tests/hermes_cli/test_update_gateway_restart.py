@@ -6,8 +6,12 @@ rather than leaving zombie processes or telling users to manually restart
 when launchd will auto-respawn.
 """
 
+import os as _os
 import subprocess
 from types import SimpleNamespace
+
+# Preserve real os.path.isdir before any monkeypatching overrides it
+os_path_isdir = _os.path.isdir
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -1114,6 +1118,7 @@ class TestFindGatewayPidsExclude:
         monkeypatch.setattr(gateway_cli, "is_windows", lambda: False)
         monkeypatch.setattr(gateway_cli.os.path, "isdir", lambda path: False)
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: profile_dir)
+        monkeypatch.setattr("os.path.isdir", lambda p: False if p == "/proc" else os_path_isdir(p))
 
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(
