@@ -13,7 +13,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
+from gateway.platforms.base import (
+    BasePlatformAdapter,
+    MessageEvent,
+    MessageType,
+    SendResult,
+    _reply_anchor_for_event,
+    _thread_metadata_for_source,
+)
 from gateway.run import GatewayRunner
 from gateway.session import SessionSource, build_session_key
 
@@ -122,6 +129,17 @@ async def test_base_adapter_routes_voice_tagged_telegram_ogg_media_tag_to_voice_
         metadata=None,
     )
     adapter.send_document.assert_not_awaited()
+
+
+def _mock_runner():
+    """Build a lightweight runner with the _thread_metadata_for_source and
+    _reply_anchor_for_event helpers that _deliver_media_from_response calls on
+    ``self``."""
+    runner = SimpleNamespace(
+        _thread_metadata_for_source=lambda source, reply_anchor: _thread_metadata_for_source(source, reply_anchor),
+        _reply_anchor_for_event=lambda event: _reply_anchor_for_event(event),
+    )
+    return runner
 
 
 @pytest.mark.asyncio
