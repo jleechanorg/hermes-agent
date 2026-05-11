@@ -10277,10 +10277,12 @@ class AIAgent:
         block_message: Optional[str] = None
         if not pre_tool_block_checked:
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                block_message, rewrite_args = get_pre_tool_call_directives(
                     function_name, function_args, task_id=effective_task_id or "",
                 )
+                if rewrite_args:
+                    function_args = {**function_args, **rewrite_args}
             except Exception:
                 pass
         if block_message is not None:
@@ -10440,10 +10442,12 @@ class AIAgent:
             block_result = None
             blocked_by_guardrail = False
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                block_message, rewrite_args = get_pre_tool_call_directives(
                     function_name, function_args, task_id=effective_task_id or "",
                 )
+                if rewrite_args:
+                    function_args = {**function_args, **rewrite_args}
             except Exception:
                 block_message = None
 
@@ -10811,10 +10815,12 @@ class AIAgent:
             # Check plugin hooks for a block directive before executing.
             _block_msg: Optional[str] = None
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message
-                _block_msg = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                _block_msg, rewrite_args = get_pre_tool_call_directives(
                     function_name, function_args, task_id=effective_task_id or "",
                 )
+                if rewrite_args:
+                    function_args = {**function_args, **rewrite_args}
             except Exception:
                 pass
 
