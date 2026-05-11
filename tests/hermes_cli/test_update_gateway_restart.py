@@ -1068,13 +1068,14 @@ class TestFindGatewayPidsExclude:
 
     def test_excludes_specified_pids(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_windows", lambda: False)
+        monkeypatch.setattr(gateway_cli, "_get_service_pids", lambda: set())
 
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(
                 cmd, 0,
                 stdout=(
-                    "user  100  0.0  0.0  0  0  ?  S  00:00  0:00  python gateway/run.py\n"
-                    "user  200  0.0  0.0  0  0  ?  S  00:00  0:00  python gateway/run.py\n"
+                    "100 python gateway/run.py\n"
+                    "200 python gateway/run.py\n"
                 ),
                 stderr="",
             )
@@ -1088,13 +1089,14 @@ class TestFindGatewayPidsExclude:
 
     def test_no_exclude_returns_all(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_windows", lambda: False)
+        monkeypatch.setattr(gateway_cli, "_get_service_pids", lambda: set())
 
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(
                 cmd, 0,
                 stdout=(
-                    "user  100  0.0  0.0  0  0  ?  S  00:00  0:00  python gateway/run.py\n"
-                    "user  200  0.0  0.0  0  0  ?  S  00:00  0:00  python gateway/run.py\n"
+                    "100 python gateway/run.py\n"
+                    "200 python gateway/run.py\n"
                 ),
                 stderr="",
             )
