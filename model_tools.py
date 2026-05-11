@@ -500,7 +500,7 @@ def handle_function_call(
 
         try:
             from hermes_cli.plugins import invoke_hook
-            invoke_hook(
+            _hook_results = invoke_hook(
                 "pre_tool_call",
                 tool_name=function_name,
                 args=function_args,
@@ -508,6 +508,13 @@ def handle_function_call(
                 session_id=session_id or "",
                 tool_call_id=tool_call_id or "",
             )
+            # Allow plugins to rewrite tool args before dispatch.
+            # A plugin returns {"action": "rewrite", "args": {...}} to replace
+            # function_args for this call only.
+            for _r in _hook_results:
+                if isinstance(_r, dict) and _r.get("action") == "rewrite":
+                    function_args = {**function_args, **_r.get("args", {})}
+                    break
         except Exception:
             pass
 
