@@ -2140,7 +2140,7 @@ class TestConcurrentToolExecution:
         """_invoke_tool should return error JSON when a plugin blocks the tool."""
         monkeypatch.setattr(
             "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked by test policy",
+            lambda *args, **kwargs: ("Blocked by test policy", [{"action": "block", "message": "Blocked by test policy"}]),
         )
         with patch("tools.todo_tool.todo_tool", side_effect=AssertionError("should not run")) as mock_todo:
             result = agent._invoke_tool("todo", {"todos": []}, "task-1")
@@ -2152,7 +2152,7 @@ class TestConcurrentToolExecution:
         """Blocked registry tools should not reach handle_function_call."""
         monkeypatch.setattr(
             "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked",
+            lambda *args, **kwargs: ("Blocked", [{"action": "block", "message": "Blocked"}]),
         )
         with patch("run_agent.handle_function_call", side_effect=AssertionError("should not run")):
             result = agent._invoke_tool("web_search", {"q": "test"}, "task-1")
@@ -2169,7 +2169,7 @@ class TestConcurrentToolExecution:
 
         monkeypatch.setattr(
             "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked by policy",
+            lambda *args, **kwargs: ("Blocked by policy", [{"action": "block", "message": "Blocked by policy"}]),
         )
         agent._checkpoint_mgr.enabled = True
         agent._checkpoint_mgr.ensure_checkpoint = MagicMock(
@@ -2193,7 +2193,7 @@ class TestConcurrentToolExecution:
         agent._turns_since_memory = 5
         monkeypatch.setattr(
             "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked",
+            lambda *args, **kwargs: ("Blocked", [{"action": "block", "message": "Blocked"}]),
         )
         with patch("tools.memory_tool.memory_tool", side_effect=AssertionError("should not run")):
             result = agent._invoke_tool(

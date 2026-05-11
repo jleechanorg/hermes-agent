@@ -10256,16 +10256,27 @@ class AIAgent:
         """
         # Check plugin hooks for a block directive before executing anything.
         block_message: Optional[str] = None
+        _hook_results: list = []
         if not pre_tool_block_checked:
             try:
                 from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                block_message, _hook_results = get_pre_tool_call_block_message(
                     function_name, function_args, task_id=effective_task_id or "",
                 )
             except Exception:
                 pass
         if block_message is not None:
             return json.dumps({"error": block_message}, ensure_ascii=False)
+
+        # Apply arg overrides from plugins (e.g. RTK command rewriting)
+        if _hook_results:
+            try:
+                from hermes_cli.plugins import get_pre_tool_call_arg_overrides
+                _overrides = get_pre_tool_call_arg_overrides(_hook_results)
+                if _overrides:
+                    function_args.update(_overrides)
+            except Exception:
+                pass
 
         if function_name == "todo":
             from tools.todo_tool import todo_tool as _todo_tool
@@ -10420,9 +10431,10 @@ class AIAgent:
 
             block_result = None
             blocked_by_guardrail = False
+            _hook_results: list = []
             try:
                 from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                block_message, _hook_results = get_pre_tool_call_block_message(
                     function_name, function_args, task_id=effective_task_id or "",
                 )
             except Exception:
@@ -10431,6 +10443,15 @@ class AIAgent:
             if block_message is not None:
                 block_result = json.dumps({"error": block_message}, ensure_ascii=False)
             else:
+                # Apply arg overrides from plugins (e.g. RTK command rewriting)
+                if _hook_results:
+                    try:
+                        from hermes_cli.plugins import get_pre_tool_call_arg_overrides
+                        _overrides = get_pre_tool_call_arg_overrides(_hook_results)
+                        if _overrides:
+                            function_args.update(_overrides)
+                    except Exception:
+                        pass
                 guardrail_decision = self._tool_guardrails.before_call(function_name, function_args)
                 if not guardrail_decision.allows_execution:
                     block_result = self._guardrail_block_result(guardrail_decision)
@@ -10791,13 +10812,24 @@ class AIAgent:
 
             # Check plugin hooks for a block directive before executing.
             _block_msg: Optional[str] = None
+            _hook_results: list = []
             try:
                 from hermes_cli.plugins import get_pre_tool_call_block_message
-                _block_msg = get_pre_tool_call_block_message(
+                _block_msg, _hook_results = get_pre_tool_call_block_message(
                     function_name, function_args, task_id=effective_task_id or "",
                 )
             except Exception:
                 pass
+
+            # Apply arg overrides from plugins (e.g. RTK command rewriting)
+            if _block_msg is None and _hook_results:
+                try:
+                    from hermes_cli.plugins import get_pre_tool_call_arg_overrides
+                    _overrides = get_pre_tool_call_arg_overrides(_hook_results)
+                    if _overrides:
+                        function_args.update(_overrides)
+                except Exception:
+                    pass
 
             _guardrail_block_decision: ToolGuardrailDecision | None = None
             if _block_msg is None:

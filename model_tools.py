@@ -741,9 +741,10 @@ def handle_function_call(
         # here.
         if not skip_pre_tool_call_hook:
             block_message: Optional[str] = None
+            hook_results: list = []
             try:
                 from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                block_message, hook_results = get_pre_tool_call_block_message(
                     function_name,
                     function_args,
                     task_id=task_id or "",
@@ -755,6 +756,16 @@ def handle_function_call(
 
             if block_message is not None:
                 return json.dumps({"error": block_message}, ensure_ascii=False)
+
+            # Apply arg overrides from plugins (e.g. RTK command rewriting)
+            if hook_results:
+                try:
+                    from hermes_cli.plugins import get_pre_tool_call_arg_overrides
+                    overrides = get_pre_tool_call_arg_overrides(hook_results)
+                    if overrides:
+                        function_args.update(overrides)
+                except Exception as _override_err:
+                    logger.debug("pre_tool_call arg override error: %s", _override_err)
 
         # Notify the read-loop tracker when a non-read/search tool runs,
         # so the *consecutive* counter resets (reads after other work are fine).
