@@ -1853,7 +1853,13 @@ class TestExecuteToolCalls:
                 return "Error code: 429 - Rate limit exceeded."
 
         responses = [_RateLimitError(), _mock_response(content="Recovered")]
+        callback_statuses = []
         gateway_statuses = []
+
+        def _status_callback(event, message):
+            callback_statuses.append((event, message))
+            if event != "lifecycle_hidden":
+                gateway_statuses.append((event, message))
 
         def _fake_api_call(api_kwargs):
             result = responses.pop(0)
@@ -1861,7 +1867,7 @@ class TestExecuteToolCalls:
                 raise result
             return result
 
-        agent.status_callback = lambda event, message: gateway_statuses.append((event, message))
+        agent.status_callback = _status_callback
         agent._interruptible_api_call = _fake_api_call
         agent._persist_session = lambda *args, **kwargs: None
         agent._save_trajectory = lambda *args, **kwargs: None
@@ -1876,6 +1882,11 @@ class TestExecuteToolCalls:
         assert result["completed"] is True
         assert result["final_response"] == "Recovered"
         assert "Rate limited. Waiting" in captured.getvalue()
+        assert any(
+            event == "lifecycle_hidden" and "Rate limited. Waiting" in message
+            for event, message in callback_statuses
+        )
+        assert gateway_statuses, "Expected regular lifecycle statuses to still reach gateway callback"
         assert not any("Rate limited. Waiting" in message for _, message in gateway_statuses)
 
 

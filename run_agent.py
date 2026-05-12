@@ -2789,9 +2789,10 @@ class AIAgent:
         """Emit a lifecycle status message to both CLI and gateway channels.
 
         CLI users see the message via ``_vprint(force=True)`` so it is always
-        visible regardless of verbose/quiet mode.  Gateway consumers receive
-        it through ``status_callback("lifecycle", ...)`` unless the caller
-        marks the message as retry telemetry that should stay out of chat.
+        visible regardless of verbose/quiet mode.  Status callbacks receive
+        lifecycle updates too.  When callers mark retry telemetry as not
+        gateway-visible, chat gateways can suppress it while non-chat
+        renderers such as the TUI still see the status update.
 
         This helper never raises — exceptions are swallowed so it cannot
         interrupt the retry/fallback logic.
@@ -2800,9 +2801,10 @@ class AIAgent:
             self._vprint(f"{self.log_prefix}{message}", force=True)
         except Exception:
             pass
-        if gateway_visible and self.status_callback:
+        if self.status_callback:
             try:
-                self.status_callback("lifecycle", message)
+                event = "lifecycle" if gateway_visible else "lifecycle_hidden"
+                self.status_callback(event, message)
             except Exception:
                 logger.debug("status_callback error in _emit_status", exc_info=True)
 
