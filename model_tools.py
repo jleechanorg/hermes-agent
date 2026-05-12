@@ -22,6 +22,7 @@ Public API (signatures preserved from the original 2,400-line version):
 
 import json
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -740,7 +741,7 @@ def handle_function_call(
                 from hermes_cli.plugins import get_pre_tool_call_directives
                 block_message, rewrite_args = get_pre_tool_call_directives(
                     function_name,
-                    function_args,
+                    copy.deepcopy(function_args),
                     task_id=task_id or "",
                     session_id=session_id or "",
                     tool_call_id=tool_call_id or "",

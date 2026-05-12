@@ -45,14 +45,14 @@ class TestGetPreToolCallDirectives:
         assert block == "blocked"
         assert rewrite == {"command": "rtk ls"}
 
-    def test_first_rewrite_wins(self):
+    def test_later_rewrites_override_earlier_keys(self):
         results = [
-            {"action": "rewrite", "args": {"command": "first"}},
+            {"action": "rewrite", "args": {"command": "first", "cwd": "/tmp/a"}},
             {"action": "rewrite", "args": {"command": "second"}},
         ]
         with patch("hermes_cli.plugins.invoke_hook", _make_invoke(results)):
             _, rewrite = get_pre_tool_call_directives("terminal", {"command": "ls"})
-        assert rewrite == {"command": "first"}
+        assert rewrite == {"command": "second", "cwd": "/tmp/a"}
 
     def test_observer_only_hook_ignored(self):
         results = [None, "string", 42, {"action": "observe"}]

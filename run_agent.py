@@ -10280,7 +10280,7 @@ class AIAgent:
             try:
                 from hermes_cli.plugins import get_pre_tool_call_directives
                 block_message, rewrite_args = get_pre_tool_call_directives(
-                    function_name, function_args, task_id=effective_task_id or "",
+                    function_name, copy.deepcopy(function_args), task_id=effective_task_id or "",
                 )
                 if rewrite_args:
                     function_args = {**function_args, **rewrite_args}
@@ -10449,7 +10449,7 @@ class AIAgent:
             try:
                 from hermes_cli.plugins import get_pre_tool_call_directives
                 block_message, rewrite_args = get_pre_tool_call_directives(
-                    function_name, function_args, task_id=effective_task_id or "",
+                    function_name, copy.deepcopy(function_args), task_id=effective_task_id or "",
                 )
                 if rewrite_args:
                     function_args = {**function_args, **rewrite_args}
@@ -10464,7 +10464,7 @@ class AIAgent:
                     block_result = self._guardrail_block_result(guardrail_decision)
                     blocked_by_guardrail = True
 
-            parsed_calls.append((tool_call, function_name, function_args, block_result, blocked_by_guardrail, rewrite_args))
+            parsed_calls.append((tool_call, function_name, function_args, block_result, blocked_by_guardrail, None))
 
         # ── Logging / callbacks ──────────────────────────────────────────
         tool_names_str = ", ".join(name for _, name, _, _, _, _ in parsed_calls)
@@ -10823,7 +10823,7 @@ class AIAgent:
             try:
                 from hermes_cli.plugins import get_pre_tool_call_directives
                 _block_msg, rewrite_args = get_pre_tool_call_directives(
-                    function_name, function_args, task_id=effective_task_id or "",
+                    function_name, copy.deepcopy(function_args), task_id=effective_task_id or "",
                 )
                 if rewrite_args:
                     function_args = {**function_args, **rewrite_args}
