@@ -83,7 +83,11 @@ sms = ["aiohttp>=3.9.0,<4"]
 # to it, which is already provided by the `mcp` extra.
 computer-use = ["mcp>=1.2.0,<2"]
 acp = ["agent-client-protocol>=0.9.0,<1.0"]
-mistral = ["mistralai>=2.3.0,<3"]
+mistral = [
+  # The mistralai project is currently unavailable from the simple index used
+  # by CI, but the published wheel URL still resolves.
+  "mistralai @ https://files.pythonhosted.org/packages/1b/48/2c5c4f853dec32a625c1a3d23809b80cf2e135c3441fe1764f72910dfea9/mistralai-2.4.5-py3-none-any.whl",
+]
 bedrock = ["boto3>=1.35.0,<2"]
 termux = [
   # Baseline Android / Termux path for reliable fresh installs.
