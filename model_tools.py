@@ -22,6 +22,7 @@ Public API (signatures preserved from the original 2,400-line version):
 
 import json
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -705,6 +706,7 @@ def handle_function_call(
     user_task: Optional[str] = None,
     enabled_tools: Optional[List[str]] = None,
     skip_pre_tool_call_hook: bool = False,
+    pre_tool_rewrite_args: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Main function call dispatcher that routes calls to the tool registry.
@@ -729,32 +731,30 @@ def handle_function_call(
         if function_name in _AGENT_LOOP_TOOLS:
             return json.dumps({"error": f"{function_name} must be handled by the agent loop"})
 
-        # Check plugin hooks for a block directive (unless caller already
-        # checked — e.g. run_agent._invoke_tool passes skip=True to
-        # avoid double-firing the hook).
-        #
-        # Single-fire contract: pre_tool_call fires exactly once per tool
-        # execution. get_pre_tool_call_block_message() internally calls
-        # invoke_hook("pre_tool_call", ...) and returns the first block
-        # directive (if any), so observer plugins see the hook on that same
-        # pass. When skip=True, the caller already fired it — do nothing
-        # here.
+        # Fire pre_tool_call once — check for block and rewrite directives.
+        # Single-fire contract: pre_tool_call executes exactly once per tool
+        # execution. When skip=True the caller already fired it (e.g.
+        # run_agent._invoke_tool) — do nothing here.
         if not skip_pre_tool_call_hook:
             block_message: Optional[str] = None
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                block_message, rewrite_args = get_pre_tool_call_directives(
                     function_name,
-                    function_args,
+                    copy.deepcopy(function_args),
                     task_id=task_id or "",
                     session_id=session_id or "",
                     tool_call_id=tool_call_id or "",
                 )
+                if rewrite_args and isinstance(rewrite_args, dict) and isinstance(function_args, dict):
+                    function_args = {**function_args, **rewrite_args}
             except Exception as _hook_err:
                 logger.debug("pre_tool_call hook error: %s", _hook_err)
 
             if block_message is not None:
                 return json.dumps({"error": block_message}, ensure_ascii=False)
+        elif pre_tool_rewrite_args and isinstance(pre_tool_rewrite_args, dict) and isinstance(function_args, dict):
+            function_args = {**function_args, **pre_tool_rewrite_args}
 
         # Notify the read-loop tracker when a non-read/search tool runs,
         # so the *consecutive* counter resets (reads after other work are fine).

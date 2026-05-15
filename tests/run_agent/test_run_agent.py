@@ -2139,8 +2139,8 @@ class TestConcurrentToolExecution:
     def test_invoke_tool_blocked_returns_error_and_skips_execution(self, agent, monkeypatch):
         """_invoke_tool should return error JSON when a plugin blocks the tool."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked by test policy",
+            "hermes_cli.plugins.get_pre_tool_call_directives",
+            lambda *args, **kwargs: ("Blocked by test policy", None),
         )
         with patch("tools.todo_tool.todo_tool", side_effect=AssertionError("should not run")) as mock_todo:
             result = agent._invoke_tool("todo", {"todos": []}, "task-1")
@@ -2151,13 +2151,40 @@ class TestConcurrentToolExecution:
     def test_invoke_tool_blocked_skips_handle_function_call(self, agent, monkeypatch):
         """Blocked registry tools should not reach handle_function_call."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked",
+            "hermes_cli.plugins.get_pre_tool_call_directives",
+            lambda *args, **kwargs: ("Blocked", None),
         )
         with patch("run_agent.handle_function_call", side_effect=AssertionError("should not run")):
             result = agent._invoke_tool("web_search", {"q": "test"}, "task-1")
 
         assert json.loads(result) == {"error": "Blocked"}
+
+    def test_concurrent_rewrite_args_survive_prechecked_dispatch(self, agent, monkeypatch):
+        """Concurrent preflight should carry rewrite args into the actual tool call."""
+        tool_call = _mock_tool_call(name="web_search", arguments='{"q":"original"}', call_id="c1")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tool_call])
+        messages = []
+
+        monkeypatch.setattr(
+            "hermes_cli.plugins.get_pre_tool_call_directives",
+            lambda *args, **kwargs: (None, {"q": "rewritten"}),
+        )
+
+        seen = {}
+
+        def fake_handle(function_name, function_args, task_id, **kwargs):
+            seen["name"] = function_name
+            seen["args"] = function_args
+            seen["kwargs"] = kwargs
+            return json.dumps({"ok": True})
+
+        with patch("run_agent.handle_function_call", side_effect=fake_handle):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert seen["name"] == "web_search"
+        assert seen["args"]["q"] == "rewritten"
+        assert len(messages) == 1
+        assert json.loads(messages[0]["content"]) == {"ok": True}
 
     def test_sequential_blocked_tool_skips_checkpoints_and_callbacks(self, agent, monkeypatch):
         """Sequential path: blocked tool should not trigger checkpoints or start callbacks."""
@@ -2168,8 +2195,8 @@ class TestConcurrentToolExecution:
         messages = []
 
         monkeypatch.setattr(
-            "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked by policy",
+            "hermes_cli.plugins.get_pre_tool_call_directives",
+            lambda *args, **kwargs: ("Blocked by policy", None),
         )
         agent._checkpoint_mgr.enabled = True
         agent._checkpoint_mgr.ensure_checkpoint = MagicMock(
@@ -2192,8 +2219,8 @@ class TestConcurrentToolExecution:
         """Blocked memory tool should not reset the nudge counter."""
         agent._turns_since_memory = 5
         monkeypatch.setattr(
-            "hermes_cli.plugins.get_pre_tool_call_block_message",
-            lambda *args, **kwargs: "Blocked",
+            "hermes_cli.plugins.get_pre_tool_call_directives",
+            lambda *args, **kwargs: ("Blocked", None),
         )
         with patch("tools.memory_tool.memory_tool", side_effect=AssertionError("should not run")):
             result = agent._invoke_tool(

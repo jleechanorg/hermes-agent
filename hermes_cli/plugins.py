@@ -1319,16 +1319,40 @@ def get_pre_tool_call_block_message(
     session_id: str = "",
     tool_call_id: str = "",
 ) -> Optional[str]:
-    """Check ``pre_tool_call`` hooks for a blocking directive.
+    """Deprecated: use ``get_pre_tool_call_directives`` instead.
 
-    Plugins that need to enforce policy (rate limiting, security
-    restrictions, approval workflows) can return::
+    Returns only the block message; rewrite directives are discarded.
+    Kept for backward compatibility with external callers.
+    """
+    block_msg, _ = get_pre_tool_call_directives(
+        tool_name,
+        args,
+        task_id=task_id,
+        session_id=session_id,
+        tool_call_id=tool_call_id,
+    )
+    return block_msg
 
-        {"action": "block", "message": "Reason the tool was blocked"}
 
-    from their ``pre_tool_call`` callback.  The first valid block
-    directive wins.  Invalid or irrelevant hook return values are
-    silently ignored so existing observer-only hooks are unaffected.
+def get_pre_tool_call_directives(
+    tool_name: str,
+    args: Optional[Dict[str, Any]],
+    task_id: str = "",
+    session_id: str = "",
+    tool_call_id: str = "",
+) -> "tuple[Optional[str], Optional[Dict[str, Any]]]":
+    """Fire ``pre_tool_call`` once and return (block_message, rewrite_args).
+
+    Plugins may return one of two directives from their ``pre_tool_call``
+    callback:
+
+        {"action": "block",   "message": "Reason"}      -> block the call
+        {"action": "rewrite", "args":    {new_args}}     -> rewrite args
+
+    The first block directive wins; rewrite directives are merged in hook
+    order so later plugins can intentionally override earlier keys.
+    Both are checked in a single hook-fire to preserve the single-fire
+    contract: ``pre_tool_call`` executes exactly once per tool execution.
     """
     hook_results = invoke_hook(
         "pre_tool_call",
@@ -1339,16 +1363,23 @@ def get_pre_tool_call_block_message(
         tool_call_id=tool_call_id,
     )
 
+    block_message: Optional[str] = None
+    rewrite_args: Dict[str, Any] = {}
+
     for result in hook_results:
         if not isinstance(result, dict):
             continue
-        if result.get("action") != "block":
-            continue
-        message = result.get("message")
-        if isinstance(message, str) and message:
-            return message
+        action = result.get("action")
+        if action == "block" and block_message is None:
+            message = result.get("message")
+            if isinstance(message, str) and message:
+                block_message = message
+        elif action == "rewrite":
+            new_args = result.get("args")
+            if isinstance(new_args, dict):
+                rewrite_args.update(new_args)
 
-    return None
+    return block_message, (rewrite_args or None)
 
 
 def _ensure_plugins_discovered(force: bool = False) -> PluginManager:
