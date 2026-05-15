@@ -24,6 +24,7 @@ import os
 import json
 import re
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -1043,23 +1044,17 @@ def handle_function_call(
         if function_name in _AGENT_LOOP_TOOLS:
             return json.dumps({"error": f"{function_name} must be handled by the agent loop"})
 
-        # Check plugin hooks for a block directive (unless caller already
-        # checked — e.g. run_agent._invoke_tool passes skip=True to
-        # avoid double-firing the hook).
-        #
-        # Single-fire contract: pre_tool_call fires exactly once per tool
-        # execution. get_pre_tool_call_block_message() internally calls
-        # invoke_hook("pre_tool_call", ...) and returns the first block
-        # directive (if any), so observer plugins see the hook on that same
-        # pass. When skip=True, the caller already fired it — do nothing
-        # here.
+        # Fire pre_tool_call once — check for block and rewrite directives.
+        # Single-fire contract: pre_tool_call executes exactly once per tool
+        # execution. When skip=True the caller already fired it (e.g.
+        # run_agent._invoke_tool) — do nothing here.
         if not skip_pre_tool_call_hook:
             block_message: Optional[str] = None
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message, get_pre_tool_call_arg_overrides
-                block_message, hook_results = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                block_message, rewrite_args = get_pre_tool_call_directives(
                     function_name,
-                    function_args,
+                    copy.deepcopy(function_args),
                     task_id=task_id or "",
                     session_id=session_id or "",
                     tool_call_id=tool_call_id or "",
@@ -1067,8 +1062,7 @@ def handle_function_call(
                     api_request_id=api_request_id or "",
                     middleware_trace=list(_tool_middleware_trace),
                 )
-                rewrite_args = get_pre_tool_call_arg_overrides(hook_results)
-                if rewrite_args:
+                if rewrite_args and isinstance(rewrite_args, dict) and isinstance(function_args, dict):
                     function_args = {**function_args, **rewrite_args}
                     function_args = coerce_tool_args(function_name, function_args)
             except Exception as _hook_err:
@@ -1091,7 +1085,7 @@ def handle_function_call(
                     middleware_trace=list(_tool_middleware_trace),
                 )
                 return result
-        elif pre_tool_rewrite_args:
+        elif pre_tool_rewrite_args and isinstance(pre_tool_rewrite_args, dict) and isinstance(function_args, dict):
             function_args = {**function_args, **pre_tool_rewrite_args}
             function_args = coerce_tool_args(function_name, function_args)
 

@@ -189,6 +189,11 @@ class TestHandleVisionAnalyzeFastPath:
         img = tmp_path / "x.png"
         img.write_bytes(_TINY_PNG)
 
+        # Prevent explicit aux-vision override from short-circuiting to text mode
+        monkeypatch.setattr(
+            "agent.image_routing._explicit_aux_vision_override", lambda _cfg: False
+        )
+
         # Set runtime override so the handler thinks we're on opus@openrouter
         from agent.auxiliary_client import set_runtime_main, clear_runtime_main
         set_runtime_main("openrouter", "anthropic/claude-opus-4.6")

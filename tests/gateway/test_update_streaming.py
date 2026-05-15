@@ -35,6 +35,7 @@ def _make_event(text="/update", platform=Platform.TELEGRAM,
 def _make_runner(hermes_home=None):
     """Create a bare GatewayRunner without calling __init__."""
     from gateway.run import GatewayRunner
+    from gateway.hooks import HookRegistry
     runner = object.__new__(GatewayRunner)
     runner.adapters = {}
     runner._voice_mode = {}
@@ -44,9 +45,14 @@ def _make_runner(hermes_home=None):
     runner._pending_messages = {}
     runner._pending_approvals = {}
     runner._failed_platforms = {}
-    # config is accessed by _check_slash_access and quick_commands lookup;
-    # None makes policy_for_source return a disabled (allow-all) policy.
+    # _handle_message accesses self.config in _check_slash_access
+    # (policy_for_source returns a disabled policy when config is None,
+    # so all commands pass through).
     runner.config = None
+    # pre_gateway_dispatch hook passes session_store as a kwarg.
+    runner.session_store = None
+    # command:<name> hooks go through self.hooks.emit_collect.
+    runner.hooks = HookRegistry()
     # Bypass the destructive-slash confirm gate — this test exercises
     # update-prompt interception, not the confirm prompt.
     runner._read_user_config = lambda: {

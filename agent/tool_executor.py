@@ -392,11 +392,13 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 middleware_trace=list(middleware_trace),
             )
         else:
+            rewrite_args = None
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                import copy
+                block_message, rewrite_args = get_pre_tool_call_directives(
                     function_name,
-                    function_args,
+                    copy.deepcopy(function_args),
                     task_id=effective_task_id or "",
                     session_id=getattr(agent, "session_id", "") or "",
                     tool_call_id=getattr(tool_call, "id", "") or "",
@@ -404,6 +406,10 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                     api_request_id=getattr(agent, "_current_api_request_id", "") or "",
                     middleware_trace=list(middleware_trace),
                 )
+                if rewrite_args and isinstance(rewrite_args, dict):
+                    function_args = {**function_args, **rewrite_args}
+                    from model_tools import coerce_tool_args
+                    function_args = coerce_tool_args(function_name, function_args)
             except Exception:
                 block_message = None
 
@@ -926,10 +932,11 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
             _block_error_type = "tool_scope_block"
         else:
             try:
-                from hermes_cli.plugins import get_pre_tool_call_block_message
-                _block_msg = get_pre_tool_call_block_message(
+                from hermes_cli.plugins import get_pre_tool_call_directives
+                import copy
+                _block_msg, rewrite_args = get_pre_tool_call_directives(
                     function_name,
-                    function_args,
+                    copy.deepcopy(function_args),
                     task_id=effective_task_id or "",
                     session_id=getattr(agent, "session_id", "") or "",
                     tool_call_id=getattr(tool_call, "id", "") or "",
@@ -937,6 +944,10 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                     api_request_id=getattr(agent, "_current_api_request_id", "") or "",
                     middleware_trace=list(middleware_trace),
                 )
+                if rewrite_args and isinstance(rewrite_args, dict):
+                    function_args = {**function_args, **rewrite_args}
+                    from model_tools import coerce_tool_args
+                    function_args = coerce_tool_args(function_name, function_args)
             except Exception:
                 pass
 
