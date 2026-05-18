@@ -213,6 +213,7 @@ jobs:
           if [ "$PR_GATE3_AUTHOR" = "dependabot[bot]" ]; then
             GATE3="PASS"
             GATE3_DETAIL="dependabot PR — CR gate auto-PASS"
+            LATEST_CR="APPROVED"  # Gate 5 LATEST_CR fast-path needs this set
           else
             # shellcheck disable=SC2016
             LATEST_CR=$(gh api repos/${{ github.repository }}/pulls/"$PR_NUM"/reviews --paginate --slurp 2>/dev/null \
