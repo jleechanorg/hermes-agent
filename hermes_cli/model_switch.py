@@ -310,6 +310,10 @@ def parse_model_flags(raw_args: str) -> tuple[str, str, bool]:
     is_global = False
     explicit_provider = ""
 
+    # Strip Block Kit payload \u2014 Slack appends block JSON after a newline to message text.
+    # Everything after the first newline is platform metadata, not user intent.
+    raw_args = raw_args.split('\n', 1)[0].strip()
+
     # Normalize Unicode dashes (Telegram/iOS auto-converts -- to em/en dash)
     # A single Unicode dash before a flag keyword becomes "--"
     import re as _re
