@@ -846,6 +846,11 @@ class TestGetProcessStartTimeMacOS:
             return b"Wed May 21 10:00:00 2025"
 
         monkeypatch.setattr(status.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            status.Path,
+            "read_text",
+            lambda self, **kw: (_ for _ in ()).throw(FileNotFoundError),
+        )
         monkeypatch.setattr(status.subprocess, "check_output", fake_check_output)
 
         status._get_process_start_time(os.getpid())
@@ -853,12 +858,22 @@ class TestGetProcessStartTimeMacOS:
 
     def test_darwin_returns_none_on_empty_output(self, monkeypatch):
         monkeypatch.setattr(status.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            status.Path,
+            "read_text",
+            lambda self, **kw: (_ for _ in ()).throw(FileNotFoundError),
+        )
         monkeypatch.setattr(status.subprocess, "check_output", lambda *a, **kw: b"  \n")
         result = status._get_process_start_time(os.getpid())
         assert result is None
 
     def test_darwin_returns_none_on_subprocess_error(self, monkeypatch):
         monkeypatch.setattr(status.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            status.Path,
+            "read_text",
+            lambda self, **kw: (_ for _ in ()).throw(FileNotFoundError),
+        )
         monkeypatch.setattr(
             status.subprocess,
             "check_output",
@@ -870,6 +885,11 @@ class TestGetProcessStartTimeMacOS:
     def test_darwin_hash_is_stable_across_calls(self, monkeypatch):
         """Verify sha256 digest is deterministic (unlike Python's hash())."""
         monkeypatch.setattr(status.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            status.Path,
+            "read_text",
+            lambda self, **kw: (_ for _ in ()).throw(FileNotFoundError),
+        )
         monkeypatch.setattr(
             status.subprocess,
             "check_output",
