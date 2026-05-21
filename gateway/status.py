@@ -125,9 +125,11 @@ def _get_process_start_time(pid: int) -> Optional[int]:
         pass
     if sys.platform == "darwin":
         try:
+            env = {**os.environ, "LC_ALL": "C"}
             out = subprocess.check_output(
                 ["ps", "-o", "lstart=", "-p", str(pid)],
                 stderr=subprocess.DEVNULL,
+                env=env,
             ).decode().strip()
             if out:
                 digest = hashlib.sha256(out.encode()).hexdigest()
