@@ -2474,6 +2474,31 @@ class SlackAdapter(BasePlatformAdapter):
             if msg_user and self._bot_user_id and msg_user == self._bot_user_id:
                 return
 
+            # Prevent loops between sibling bot instances (e.g. prod @hermes and staging @hermes_staging).
+            # Block by user ID or bot ID only — NOT by app_id, which is too broad and
+            # would also block human users posting via XOXP tokens associated with the same app.
+            # Configure via env vars to avoid hardcoding instance-specific IDs in source:
+            #   SLACK_LOOP_BLOCK_USERS  — comma-separated Slack user IDs to block
+            #   SLACK_LOOP_BLOCK_BOTS   — comma-separated bot_id values to block
+            #   SLACK_LOOP_BLOCK_NAMES  — comma-separated bot display names to block (case-insensitive)
+            msg_bot_id = event.get("bot_id", "")
+            msg_username = (event.get("username") or "").lower().strip()
+
+            _block_users = {u.strip() for u in os.getenv("SLACK_LOOP_BLOCK_USERS", "").split(",") if u.strip()}
+            _block_bots = {b.strip() for b in os.getenv("SLACK_LOOP_BLOCK_BOTS", "").split(",") if b.strip()}
+            _block_names = {n.strip().lower() for n in os.getenv("SLACK_LOOP_BLOCK_NAMES", "").split(",") if n.strip()}
+
+            if (
+                (msg_user and msg_user in _block_users) or
+                (msg_bot_id and msg_bot_id in _block_bots) or
+                (msg_username and msg_username in _block_names)
+            ):
+                logger.info(
+                    "Slack Adapter: Ignoring loop-prone message from blocked bot instance: "
+                    "user=%s, bot_id=%s, username=%s",
+                    msg_user, msg_bot_id, msg_username
+                )
+                return
         # Ignore message edits and deletions
         subtype = event.get("subtype")
         if subtype in {"message_changed", "message_deleted"}:
