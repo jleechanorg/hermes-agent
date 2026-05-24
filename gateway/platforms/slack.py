@@ -1770,8 +1770,24 @@ class SlackAdapter(BasePlatformAdapter):
             msg_user = event.get("user", "")
             if msg_user and self._bot_user_id and msg_user == self._bot_user_id:
                 return
+
             # Prevent loops between different hermes bot instances (production @hermes and staging @hermes_staging)
-            if msg_user in ("U0AEZC7RX1Q", "U0APZAB0DUZ"):
+            # Check by user ID, bot ID, app ID, and username to be extremely robust.
+            msg_bot_id = event.get("bot_id", "")
+            msg_app_id = event.get("app_id", "")
+            msg_username = (event.get("username") or "").lower().strip()
+
+            if (
+                (msg_user and msg_user in ("U0AEZC7RX1Q", "U0APZAB0DUZ")) or
+                (msg_bot_id and msg_bot_id in ("B0AEHUEA0JK", "B0APE1TT42F")) or
+                (msg_app_id and msg_app_id in ("A0AESRKA7L3", "A0APZAC659P")) or
+                (msg_username in ("hermes", "hermes_staging", "hermes staging", "hermes-staging"))
+            ):
+                logger.info(
+                    "Slack Adapter: Ignoring loop-prone message from hermes bot instance: "
+                    "user=%s, bot_id=%s, app_id=%s, username=%s",
+                    msg_user, msg_bot_id, msg_app_id, msg_username
+                )
                 return
 
         # Ignore message edits and deletions
