@@ -153,6 +153,13 @@ export interface CompletionItem {
   meta: string
 }
 
+/** One typed entry in a subagent's activity trace — `kind` drives glyph + color
+ *  in the dashboard so the trace reads like a transcript, not flat dumped lines. */
+export interface TraceEntry {
+  kind: 'start' | 'tool' | 'progress' | 'summary'
+  text: string
+}
+
 /** A delegated subagent, tracked from the `subagent.*` event stream (agents dashboard). */
 export interface SubagentInfo {
   id: string
@@ -163,8 +170,8 @@ export interface SubagentInfo {
   parentId?: string
   summary?: string
   lastTool?: string
-  /** Live activity trace (item 15) — tool/progress/summary lines, newest last. */
-  trace?: string[]
+  /** Live activity trace (item 15) — typed entries, newest last; rendered by kind. */
+  trace?: TraceEntry[]
   /** Latest thinking text (transient; not appended to the trace to avoid flooding). */
   thought?: string
 }
@@ -971,10 +978,11 @@ export function createSessionStore(options?: SessionStoreOptions) {
             // deltas update a transient `thought` (not appended — they'd flood).
             const text = readStr(event.payload, 'text')
             const trace = (sa.trace ??= [])
-            if (event.type === 'subagent.start') trace.push(`▶ ${goal ?? sa.goal ?? 'started'}`)
-            else if (event.type === 'subagent.tool' && tool) trace.push(`⚡ ${tool}${text ? ` — ${text}` : ''}`)
-            else if (event.type === 'subagent.progress' && text) trace.push(text)
-            else if (event.type === 'subagent.complete') trace.push(`✓ ${summary ?? 'done'}`)
+            if (event.type === 'subagent.start') trace.push({ kind: 'start', text: goal ?? sa.goal ?? 'started' })
+            else if (event.type === 'subagent.tool' && tool)
+              trace.push({ kind: 'tool', text: text ? `${tool} — ${text}` : tool })
+            else if (event.type === 'subagent.progress' && text) trace.push({ kind: 'progress', text })
+            else if (event.type === 'subagent.complete') trace.push({ kind: 'summary', text: summary ?? 'done' })
             else if (event.type === 'subagent.thinking' && text) sa.thought = text
             if (trace.length > SUBAGENT_TRACE_LIMIT) trace.splice(0, trace.length - SUBAGENT_TRACE_LIMIT)
           })

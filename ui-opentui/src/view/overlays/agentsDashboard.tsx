@@ -12,7 +12,8 @@ import { type BoxRenderable, type ScrollBoxRenderable } from '@opentui/core'
 import { useKeyboard } from '@opentui/solid'
 import { createSignal, For, onMount, Show } from 'solid-js'
 
-import type { SubagentInfo } from '../../logic/store.ts'
+import type { SubagentInfo, TraceEntry } from '../../logic/store.ts'
+import { useDimensions } from '../dimensions.tsx'
 import { useCloseLayer } from '../keymap.tsx'
 import { useTheme } from '../theme.tsx'
 
@@ -26,6 +27,22 @@ function statusColor(status: string, theme: ReturnType<typeof useTheme>): string
   return c.warn
 }
 
+/** Keep the head of a string, ellipsizing when it must clip (one-line master rows). */
+function truncRight(s: string, max: number): string {
+  if (max <= 1) return s.length > max ? '…' : s
+  return s.length <= max ? s : s.slice(0, max - 1) + '…'
+}
+
+/** Per-kind glyph + color for a trace entry — makes the detail pane read like a
+ *  transcript (tool calls pop, progress is quiet, the summary is the payoff). */
+function traceGlyph(kind: TraceEntry['kind']): string {
+  return kind === 'tool' ? '⚡' : kind === 'summary' ? '✓' : kind === 'start' ? '▶' : '·'
+}
+function traceColor(kind: TraceEntry['kind'], theme: ReturnType<typeof useTheme>): string {
+  const c = theme().color
+  return kind === 'tool' ? c.accent : kind === 'summary' ? c.ok : kind === 'start' ? c.label : c.muted
+}
+
 export function AgentsDashboard(props: {
   subagents: SubagentInfo[]
   onClose: () => void
@@ -33,6 +50,7 @@ export function AgentsDashboard(props: {
   preselect?: string | undefined
 }) {
   const theme = useTheme()
+  const dims = useDimensions()
   const [sel, setSel] = createSignal(0)
   let rootRef: BoxRenderable | undefined
   let traceBox: ScrollBoxRenderable | undefined
@@ -86,18 +104,33 @@ export function AgentsDashboard(props: {
           when={count() > 0}
           fallback={<text fg={theme().color.muted}>No subagents yet — delegate a task to spawn one.</text>}
         >
+          {/* ONE line per row (de-crowd, glitch 2026-06-13): indent + select caret
+              + status + a TRUNCATED goal + model — the full prompt no longer wraps
+              the master list into a wall of text. The detail pane shows the rest. */}
           <For each={props.subagents}>
-            {(sa, i) => (
-              <text onMouseDown={() => setSel(i())}>
-                <span style={{ fg: theme().color.muted }}>{'  '.repeat(Math.max(0, sa.depth))}</span>
-                <span style={{ fg: i() === selected() ? theme().color.accent : theme().color.muted }}>
-                  {i() === selected() ? '▸ ' : '  '}
-                </span>
-                <span style={{ fg: statusColor(sa.status, theme) }}>{`● ${sa.status}`}</span>
-                <span style={{ fg: theme().color.label }}>{`  ${sa.goal || sa.id}`}</span>
-                <span style={{ fg: theme().color.muted }}>{sa.lastTool ? `  ⚡${sa.lastTool}` : ''}</span>
-              </text>
-            )}
+            {(sa, i) => {
+              const indent = () => '  '.repeat(Math.max(0, sa.depth))
+              // budget the goal into the leftover row width so it never wraps:
+              // total − border/pad − indent − caret(2) − `● status `(status+3) − model tail.
+              const goalMax = () => {
+                const modelTail = sa.model ? sa.model.length + 3 : 0
+                const used = 4 + indent().length + 2 + (sa.status.length + 3) + modelTail
+                return Math.max(8, dims().width - used)
+              }
+              return (
+                <text onMouseDown={() => setSel(i())}>
+                  <span style={{ fg: theme().color.muted }}>{indent()}</span>
+                  <span style={{ fg: i() === selected() ? theme().color.accent : theme().color.muted }}>
+                    {i() === selected() ? '▸ ' : '  '}
+                  </span>
+                  <span style={{ fg: statusColor(sa.status, theme) }}>{`● ${sa.status} `}</span>
+                  <span style={{ fg: i() === selected() ? theme().color.label : theme().color.text }}>
+                    {truncRight(sa.goal || sa.id, goalMax())}
+                  </span>
+                  <span style={{ fg: theme().color.muted }}>{sa.model ? ` · ${sa.model}` : ''}</span>
+                </text>
+              )
+            }}
           </For>
         </Show>
       </box>
@@ -133,9 +166,12 @@ export function AgentsDashboard(props: {
                     fallback={<text fg={theme().color.muted}>(no activity yet)</text>}
                   >
                     <For each={sa().trace ?? []}>
-                      {line => (
+                      {entry => (
                         <text>
-                          <span style={{ fg: theme().color.muted }}>{line}</span>
+                          <span style={{ fg: traceColor(entry.kind, theme) }}>{`${traceGlyph(entry.kind)} `}</span>
+                          <span style={{ fg: entry.kind === 'summary' ? theme().color.text : theme().color.muted }}>
+                            {entry.text}
+                          </span>
                         </text>
                       )}
                     </For>

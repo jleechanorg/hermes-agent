@@ -175,7 +175,7 @@ function TrayRows(props: { agents: SubagentInfo[]; selected: number; firstSeen: 
       <For each={props.agents}>
         {(sa, i) => {
           const active = () => i() === props.selected
-          const last = () => sa.trace?.at(-1) ?? sa.thought
+          const last = () => sa.trace?.at(-1)?.text ?? sa.thought
           const secs = () => (tick(), elapsedSeconds(props.firstSeen.get(sa.id) ?? Date.now()))
           return (
             <box

@@ -335,9 +335,14 @@ describe('session store — subagents (Phase 5e agents dashboard)', () => {
     store.apply({ type: 'subagent.progress', payload: { subagent_id: 'a1', text: 'found 3 hits' } })
     store.apply({ type: 'subagent.complete', payload: { subagent_id: 'a1', summary: 'done crunching' } })
     const sa = store.state.subagents[0]!
-    // thinking text is transient (not in the trace), the rest is a concise log
+    // thinking text is transient (not in the trace), the rest is a concise TYPED log
     expect(sa.thought).toBe('considering options')
-    expect(sa.trace).toEqual(['▶ crunch data', '⚡ web_search — opentui', 'found 3 hits', '✓ done crunching'])
+    expect(sa.trace).toEqual([
+      { kind: 'start', text: 'crunch data' },
+      { kind: 'tool', text: 'web_search — opentui' },
+      { kind: 'progress', text: 'found 3 hits' },
+      { kind: 'summary', text: 'done crunching' }
+    ])
   })
 
   test('clearTranscript also clears subagents', () => {
