@@ -87,11 +87,20 @@ class _LocalMem0Client:
     no Mem0 Platform cloud account, selected by setting ``host`` in mem0.json.
     """
 
-    def __init__(self, host: str, *, search_timeout: int = 30,
+    def __init__(self, host: str, *, api_key: str = "", search_timeout: int = 30,
                  add_timeout: int = 180) -> None:
         self._base = host.rstrip("/")
+        self._api_key = api_key or ""
         self._search_timeout = search_timeout
         self._add_timeout = add_timeout
+
+    def _headers(self, base: Dict[str, str]) -> Dict[str, str]:
+        # Forward the configured key as X-API-Key so self-hosted mem0 servers with
+        # default auth enabled accept the request; unauthenticated (AUTH_DISABLED)
+        # servers ignore the extra header, so this is safe when no key is set.
+        if self._api_key:
+            base = {**base, "X-API-Key": self._api_key}
+        return base
 
     def _post(self, path: str, payload: Dict[str, Any], timeout: int) -> Any:
         import urllib.request
@@ -99,7 +108,8 @@ class _LocalMem0Client:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self._base + path, data=data,
-            headers={"Content-Type": "application/json"}, method="POST")
+            headers=self._headers({"Content-Type": "application/json"}),
+            method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
@@ -110,7 +120,8 @@ class _LocalMem0Client:
         qs = urllib.parse.urlencode(
             {k: v for k, v in params.items() if v is not None})
         url = self._base + path + (("?" + qs) if qs else "")
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(
+            url, headers=self._headers({}), method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
@@ -127,12 +138,15 @@ class _LocalMem0Client:
 
     def add(self, messages: List[Dict[str, Any]], user_id: str | None = None,
             agent_id: str | None = None, infer: bool = True, **_: Any) -> Any:
-        # mem0_server.py runs server-side fact extraction; ``infer`` is accepted
-        # for MemoryClient parity (verbatim store not yet supported server-side).
+        # Forward ``infer`` so a verbatim store (infer=False, used by
+        # mem0_conclude) is honored when the self-hosted server supports it,
+        # matching the cloud MemoryClient path; servers that ignore the field
+        # simply run their default extraction.
         return self._post("/memories", {
             "messages": messages,
             "user_id": user_id,
             "agent_id": agent_id,
+            "infer": infer,
         }, self._add_timeout)
 
     def get_all(self, filters: Dict[str, Any] | None = None, **_: Any) -> Any:
@@ -253,7 +267,7 @@ class Mem0MemoryProvider(MemoryProvider):
             # Self-hosted REST backend (local Qdrant + Ollama via mem0_server.py)
             # takes precedence when a host is configured — no cloud account.
             if self._host:
-                self._client = _LocalMem0Client(self._host)
+                self._client = _LocalMem0Client(self._host, api_key=self._api_key)
                 return self._client
             try:
                 from mem0 import MemoryClient
