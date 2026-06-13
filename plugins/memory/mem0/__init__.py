@@ -66,6 +66,11 @@ def _load_config() -> dict:
         except Exception:
             pass
 
+    # Normalize host once so is_available() and initialize() agree: a
+    # whitespace-only host must read as "not configured" everywhere, not
+    # activate the provider and then silently fall back to the cloud client.
+    config["host"] = (config.get("host") or "").strip()
+
     return config
 
 
@@ -283,7 +288,7 @@ class Mem0MemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._config = _load_config()
         self._api_key = self._config.get("api_key", "")
-        self._host = (self._config.get("host") or "").strip()
+        self._host = self._config.get("host", "")  # already normalized in _load_config
         # Prefer gateway-provided user_id for per-user memory scoping;
         # fall back to config/env default for CLI (single-user) sessions.
         self._user_id = kwargs.get("user_id") or self._config.get("user_id", "hermes-user")
