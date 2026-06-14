@@ -1169,6 +1169,10 @@ async def _send_slack(token, chat_id, message, thread_id=None):
                     # explicitly asked for a thread_ts, an absent/empty
                     # message.thread_ts is a real misroute — fail loud with
                     # both the target attempted and the channel landed in.
+                    # Also fail loud if the echoed thread_ts doesn't match the
+                    # requested one (catches a Slack API that quietly threaded
+                    # under a *different* parent than asked). See codex-connector
+                    # P2 review on PR #29.
                     actual_thread_ts = (
                         posted_message.get("thread_ts") or data.get("thread_ts")
                     )
@@ -1180,6 +1184,14 @@ async def _send_slack(token, chat_id, message, thread_id=None):
                             "This is the AO #684 misroute shape — do not treat the "
                             "post as successful. Fall back to Path A/B "
                             "(slack_mcp_post.sh or direct chat.postMessage with thread_ts)."
+                        )
+                    if thread_id and actual_thread_ts and actual_thread_ts != thread_id:
+                        return _error(
+                            "Slack honored chat.postMessage with `ok: True` but "
+                            f"threaded the reply under a different parent "
+                            f"(target attempted: slack:{chat_id}:{thread_id}; "
+                            f"actual thread_ts: {actual_thread_ts}; channel: {chat_id}). "
+                            "This is a misroute — do not treat the post as successful."
                         )
                     return {"success": True, "platform": "slack", "chat_id": chat_id, "message_id": data.get("ts")}
                 return _error(f"Slack API error: {data.get('error', 'unknown')}")

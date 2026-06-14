@@ -1068,6 +1068,38 @@ class TestSendSlackThreadTs:
         assert result["message_id"] == "1781462111.465060"
         assert result["chat_id"] == "C0AH3RY3DK6"
 
+    def test_mismatched_thread_ts_fails_loud(self):
+        """When Slack echoes a different thread_ts than requested, fail loud.
+
+        Regression for codex-connector P2 review on PR #29: the previous
+        fail-loud check only verified *some* thread_ts was returned, not
+        that it matched the caller's requested parent. A quiet thread_ts
+        mismatch is the same misroute class as the absence case.
+        """
+        mock_session, _ = self._build_mock(
+            200,
+            response_data={
+                "ok": True,
+                "ts": "1781462111.999999",
+                "message": {
+                    "ts": "1781462111.999999",
+                    # Slack honored the request but threaded under a
+                    # DIFFERENT parent than the caller asked for.
+                    "thread_ts": "9999999999.000000",
+                    "text": "echo",
+                },
+            },
+        )
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            result = self._run("tok", "C0AH3RY3DK6", "hi", thread_id="1781465902.728229")
+        assert "error" in result, (
+            f"Mismatched thread_ts must fail loud; got success={result!r}. "
+            f"Requested 1781465902.728229, got 9999999999.000000."
+        )
+        # The error must name the target attempted and the actual thread_ts.
+        assert "1781465902.728229" in str(result)
+        assert "9999999999.000000" in str(result)
+
 
 class TestSendToPlatformSlackThread:
     """_send_to_platform passes thread_id through to _send_slack.
