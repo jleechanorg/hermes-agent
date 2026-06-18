@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jleechan.mcp-daemon</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@HOME@/.config/mcp-daemon/start-mcp-daemons.sh</string>
+    <string>start</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.nvm/versions/node/v22.22.0/bin:@HOME@/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>@HOME@</string>
+  </dict>
+
+  <!--
+    Self-healing supervisor. The start-mcp-daemons.sh script wraps each
+    MCP server in a `while true; do npx supergateway ...; sleep 3; done`
+    bash loop, so the script itself exits quickly after spawning those
+    loops. KeepAlive + ThrottleInterval makes launchd respawn the script
+    within 60s if it ever dies (e.g. SIGTERM, OOM, manual kill), without
+    flooding the system.
+
+    Why not just StartInterval=300? 2026-06-17 incident: launchd silently
+    entered `state = not running, active count = 0` after a clean
+    RunAtLoad — the StartInterval schedule stopped firing with no error
+    in any log. KeepAlive is the durable insurance against that class
+    of supervisor death. ThrottleInterval caps the respawn rate.
+
+    See: feedback_2026-06-17_mcp_daemon_diagnosis_fixes (bead rev-gu8bi)
+    See: ~/.claude/projects/-Users-jleechan-projects-worldarchitect-ai/memory/feedback_2026-06-17_mcp_daemon_diagnosis_fixes.md
+  -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <!--
+    Periodic reconcile: every 5 minutes, re-run the script. Each
+    supergateway is wrapped in its own restart loop inside the script,
+    so this is belt-and-suspenders for the case where a bash loop
+    itself was killed.
+  -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>@HOME@/.config/mcp-daemon/logs/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/.config/mcp-daemon/logs/launchd.log</string>
+</dict>
+</plist>
