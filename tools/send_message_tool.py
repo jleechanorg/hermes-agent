@@ -188,18 +188,64 @@ def _handle_send(args):
     else:
         is_explicit = False
 
+    # Workspace/team disambiguation for Slack. When the target is a channel
+    # ID or the resolver finds a unique match, capture the workspace team_id
+    # so the actual ``chat.postMessage`` call goes to the correct
+    # workspace's bot token. Without this, a channel name that exists in
+    # two Slack workspaces would silently post to whichever workspace the
+    # primary bot token belongs to (cross-channel Slack misroute).
+    resolved_team_id = ""
+
+    # For explicit channel IDs (e.g. ``slack:C0X``), the strict resolver
+    # below won't run, so look up the workspace team_id directly from the
+    # channel directory. Without this, an explicit ID still posts via the
+    # primary bot token even when the channel lives in a different
+    # workspace — a cross-channel misroute on the explicit-ID path.
+    if is_explicit and chat_id and platform_name == "slack":
+        try:
+            from gateway.channel_directory import lookup_channel_team
+            resolved_team_id = lookup_channel_team(platform_name, chat_id) or ""
+        except Exception:
+            resolved_team_id = ""
+
     # Resolve human-friendly channel names to numeric IDs
     if target_ref and not is_explicit:
         try:
-            from gateway.channel_directory import resolve_channel_name
-            resolved = resolve_channel_name(platform_name, target_ref)
-            if resolved:
-                chat_id, thread_id, _ = _parse_target_ref(platform_name, resolved)
+            # Prefer the strict resolver so we get the workspace team_id
+            # alongside the chat_id. Fall back to the legacy
+            # ``resolve_channel_name`` for non-Slack platforms where the
+            # strict resolver returns (chat_id, "").
+            from gateway.channel_directory import resolve_channel_name_strict, resolve_channel_name
+            strict = resolve_channel_name_strict(platform_name, target_ref)
+            if strict is not None:
+                chat_id, resolved_team_id = strict
+                # Re-parse the resolved chat_id so a 3-part form
+                # ``slack:CHAN:thread_ts`` carried through the directory
+                # (rare, but possible for topic-like entries) still
+                # extracts thread_id correctly.
+                chat_id, thread_id, is_explicit = _parse_target_ref(platform_name, chat_id)
             else:
-                return json.dumps({
-                    "error": f"Could not resolve '{target_ref}' on {platform_name}. "
-                    f"Use send_message(action='list') to see available targets."
-                })
+                # Strict resolver refused (cross-workspace ambiguous). Try
+                # the legacy resolver for non-Slack platforms where the
+                # strict path is conservative.
+                legacy = resolve_channel_name(platform_name, target_ref)
+                if legacy:
+                    chat_id, thread_id, is_explicit = _parse_target_ref(platform_name, legacy)
+                else:
+                    if platform_name == "slack":
+                        return json.dumps({
+                            "error": (
+                                f"Ambiguous Slack target '{target_ref}': the same "
+                                f"channel name exists in multiple workspaces. "
+                                f"Use send_message(action='list') to see the workspace-qualified "
+                                f"targets, then send with the explicit channel ID "
+                                f"(e.g. 'slack:C0XXXXXXXXX')."
+                            )
+                        })
+                    return json.dumps({
+                        "error": f"Could not resolve '{target_ref}' on {platform_name}. "
+                        f"Use send_message(action='list') to see available targets."
+                    })
         except Exception:
             return json.dumps({
                 "error": f"Could not resolve '{target_ref}' on {platform_name}. "
@@ -290,6 +336,7 @@ def _handle_send(args):
                 thread_id=thread_id,
                 media_files=media_files,
                 force_document=force_document_attachments,
+                team_id=resolved_team_id,
             )
         )
         if used_home_channel and isinstance(result, dict) and result.get("success"):
@@ -521,12 +568,22 @@ async def _send_via_adapter(
     }
 
 
-async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None, media_files=None, force_document=False):
+async def _send_to_platform(
+    platform, pconfig, chat_id, message,
+    thread_id=None, media_files=None, force_document=False,
+    team_id="",
+):
     """Route a message to the appropriate platform sender.
 
     Long messages are automatically chunked to fit within platform limits
     using the same smart-splitting algorithm as the gateway adapters
     (preserves code-block boundaries, adds part indicators).
+
+    ``team_id`` is forwarded to the Slack sender so a multi-workspace bot
+    posts via the correct workspace's bot token. Without this, a channel
+    name that resolves to a channel in workspace B but the primary bot
+    token belongs to workspace A would silently land in workspace A — a
+    cross-channel Slack misroute.
     """
     from gateway.config import Platform
     from gateway.platforms.base import BasePlatformAdapter, utf16_len
@@ -709,7 +766,10 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     last_result = None
     for chunk in chunks:
         if platform == Platform.SLACK:
-            result = await _send_slack(pconfig.token, chat_id, chunk, thread_id=thread_id)
+            result = await _send_slack(
+                pconfig.token, chat_id, chunk,
+                thread_id=thread_id, team_id=team_id,
+            )
         elif platform == Platform.WHATSAPP:
             result = await _send_whatsapp(pconfig.extra, chat_id, chunk)
         elif platform == Platform.SIGNAL:
@@ -1130,13 +1190,22 @@ async def _send_discord(token, chat_id, message, thread_id=None, media_files=Non
         return _error(f"Discord send failed: {e}")
 
 
-async def _send_slack(token, chat_id, message, thread_id=None):
+async def _send_slack(token, chat_id, message, thread_id=None, team_id=""):
     """Send via Slack Web API.
 
     When ``thread_id`` is provided (from a 3-part target like
     ``slack:CHAN:thread_ts``), the payload includes ``thread_ts`` so the
     message replies in-thread instead of posting to the channel root.
     This closes the 5th Slack misroute class (AO #684).
+
+    When ``team_id`` is provided (from a multi-workspace
+    ``resolve_channel_name_strict`` resolution), the workspace-specific
+    bot token is looked up from ``slack_tokens.json`` and used instead of
+    the primary token. Without this, a channel name that resolves to a
+    channel in workspace B but the primary bot token belongs to workspace
+    A would silently post to the wrong workspace — a cross-channel Slack
+    misroute. If no token is found for the requested team_id, the call
+    fails loud rather than silently falling back to the primary token.
 
     Fail-loud: if the caller requested a thread_ts but the Slack response
     does not echo one back on the posted message, return an error result
@@ -1145,6 +1214,22 @@ async def _send_slack(token, chat_id, message, thread_id=None):
     silent-success behavior is exactly what produced the AO #684
     out-of-thread incident cluster (10+ misroutes since 2026-06-09).
     """
+    # Select the bot token for the workspace if a team_id was supplied.
+    # Without this branch, ``token`` is the primary bot token which may
+    # belong to a different workspace than the one that owns ``chat_id``.
+    auth_token = token
+    if team_id:
+        workspace_token = _resolve_slack_token_for_team(team_id)
+        if workspace_token:
+            auth_token = workspace_token
+        else:
+            return _error(
+                f"Cross-channel Slack misroute prevented: no bot token configured "
+                f"for workspace '{team_id}' (target chat_id: {chat_id}). "
+                f"Either add this workspace's bot token to ~/.hermes/slack_tokens.json "
+                f"or send with an explicit channel ID from the correct workspace."
+            )
+
     try:
         import aiohttp
     except ImportError:
@@ -1154,7 +1239,7 @@ async def _send_slack(token, chat_id, message, thread_id=None):
         _proxy = resolve_proxy_url()
         _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
         url = "https://slack.com/api/chat.postMessage"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
             payload = {"channel": chat_id, "text": message, "mrkdwn": True}
             if thread_id:
@@ -1194,9 +1279,56 @@ async def _send_slack(token, chat_id, message, thread_id=None):
                             "This is a misroute — do not treat the post as successful."
                         )
                     return {"success": True, "platform": "slack", "chat_id": chat_id, "message_id": data.get("ts")}
-                return _error(f"Slack API error: {data.get('error', 'unknown')}")
+                # Cross-channel misroute detection at the API layer. When
+                # the caller asked us to use a specific workspace token,
+                # but Slack rejected the post with ``channel_not_found``
+                # (the channel belongs to a different workspace), or with
+                # ``token_revoked`` / ``not_in_channel``, that's the exact
+                # misroute shape we tried to prevent. Fail loud with the
+                # workspace attempted and the channel id so operators can
+                # diagnose without inspecting logs.
+                api_error = data.get("error", "unknown")
+                if team_id and api_error in ("channel_not_found", "token_revoked", "not_in_channel", "missing_scope"):
+                    return _error(
+                        f"Cross-channel Slack misroute prevented: chat.postMessage "
+                        f"returned '{api_error}' for workspace '{team_id}' (chat_id: {chat_id}). "
+                        f"The channel likely belongs to a different workspace than the "
+                        f"one the bot token authorizes."
+                    )
+                return _error(f"Slack API error: {api_error}")
     except Exception as e:
         return _error(f"Slack send failed: {e}")
+
+
+def _resolve_slack_token_for_team(team_id: str) -> Optional[str]:
+    """Look up the bot token for a specific Slack workspace.
+
+    Reads ``~/.hermes/slack_tokens.json`` (the same file SlackAdapter uses)
+    to find the bot token associated with ``team_id``. Returns ``None``
+    if the file is missing, malformed, or doesn't contain an entry for
+    the requested workspace.
+
+    The function is intentionally tolerant of filesystem errors — a
+    read failure should not silently degrade to the primary token, since
+    that is precisely the misroute shape the cross-channel guard exists
+    to prevent. Callers MUST treat a ``None`` return value as a hard
+    refusal and surface an error rather than retrying with the primary.
+    """
+    if not team_id:
+        return None
+    try:
+        from hermes_constants import get_hermes_home
+        tokens_file = get_hermes_home() / "slack_tokens.json"
+        if not tokens_file.exists():
+            return None
+        saved = json.loads(tokens_file.read_text(encoding="utf-8"))
+        entry = saved.get(team_id)
+        if isinstance(entry, dict):
+            tok = entry.get("token", "")
+            return tok or None
+        return None
+    except Exception:
+        return None
 
 
 async def _send_whatsapp(extra, chat_id, message):
