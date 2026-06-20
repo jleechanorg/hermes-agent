@@ -6932,6 +6932,26 @@ class GatewayRunner:
             source.chat_id or "unknown", _msg_preview,
         )
 
+        # Pin the inbound chat_id for the duration of this handler so any
+        # outbound send that targets a different channel is caught by
+        # `OutboundGuard.verify_send` and logged. This is the regression
+        # guard for the 2026-06-19 11:20:58–11:22:32 cross-channel
+        # misroute (orphan `1781868147.039389` posted to C0AJQ5M0A0Y
+        # while the inbound was from C0AH3RY3DK6). See
+        # `gateway/outbound_guard.py` and the regression test in
+        # `tests/hermes_cli/test_outbound_guard.py`.
+        _outbound_token = None
+        _outbound_guard = getattr(self, "_outbound_guard", None)
+        if _outbound_guard is None:
+            from gateway.outbound_guard import OutboundGuard
+            _outbound_guard = OutboundGuard()
+            self._outbound_guard = _outbound_guard
+        try:
+            _outbound_token = _outbound_guard.enter(source.chat_id)
+        except Exception:
+            logger.debug("Failed to pin outbound chat_id guard", exc_info=True)
+            _outbound_token = None
+
         # Get or create session
         session_entry = self.session_store.get_or_create_session(source)
         session_key = session_entry.session_key
@@ -7925,6 +7945,17 @@ class GatewayRunner:
         finally:
             # Restore session context variables to their pre-handler state
             self._clear_session_env(_session_env_tokens)
+            # Reset the outbound chat_id guard so the next handler's
+            # verify_send() checks are not contaminated by the chat_id
+            # pinned for this inbound. Regression guard for the
+            # 2026-06-19 11:20:58–11:22:32 UTC cross-channel misroute
+            # (orphan 1781868147.039389 in C0AJQ5M0A0Y while inbound
+            # was from C0AH3RY3DK6). See gateway/outbound_guard.py.
+            if _outbound_token is not None and _outbound_guard is not None:
+                try:
+                    _outbound_guard.reset(_outbound_token)
+                except Exception:
+                    logger.debug("Failed to reset outbound chat_id guard", exc_info=True)
 
     def _format_session_info(self) -> str:
         """Resolve current model config and return a formatted info block.
