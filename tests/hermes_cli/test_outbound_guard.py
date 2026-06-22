@@ -27,6 +27,13 @@ This test pins down the new OutboundGuard behavior so that:
      helpers propagate the same pinned value across the process.
  11. A real SlackAdapter.send call with an aligned chat_id succeeds
      without recording any violations; a misaligned one fails fast.
+ 12. pin_inbound(None) marks the handler as active and refuses every
+     subsequent verify_send (handler is alive but its inbound chat_id
+     is unknown — we cannot verify alignment with no destination).
+ 13. The same sentinel semantics propagate through the module-level
+     singleton (pin_inbound(None) → verify_outbound(... ) refused).
+ 14. `active_chat_id` returns None for both "no handler" and "handler
+     pinned None" — the two are distinguished only via `is_active`.
 """
 
 from __future__ import annotations
@@ -241,6 +248,97 @@ def test_module_level_singleton_pins_and_verifies():
         unpin_inbound(token)
     # After unpinning, verify_outbound is unrestricted again.
     assert verify_outbound(C_HOME) is True
+
+
+def test_pin_none_marks_handler_active_and_refuses_sends():
+    """Regression for the second CodeRabbit Major on this PR.
+
+    When a handler calls `enter(None)` (or `pin_inbound(None)`), it
+    signals: "this handler is active but its inbound chat_id is
+    unknown/unparseable". The guard must:
+      * `is_active` becomes True
+      * `active_chat_id` returns None
+      * ANY subsequent verify_send — regardless of chat_id, including
+        None — records a violation. Sends through a handler that has
+        no idea what channel to target are unverifiable and must be
+        refused.
+
+    Without the `_NO_ACTIVE_INBOUND` sentinel the guard would
+    conflate this state with "no handler is running" and let the send
+    through silently — which is exactly the misroute incident class.
+    """
+    guard = OutboundGuard()
+    # Before any pin: inactive.
+    assert guard.is_active is False
+    assert guard.active_chat_id is None
+
+    token = guard.enter(None)
+    try:
+        # Handler is active, but inbound chat_id is missing.
+        assert guard.is_active is True
+        assert guard.active_chat_id is None
+
+        # ANY verify_send under this pin must refuse — there is no
+        # destination that could be verified against the missing inbound.
+        assert guard.verify_send(C_HOME) is False
+        assert guard.verify_send(C_WORLDARCH) is False
+        assert guard.verify_send(None) is False
+
+        # All three were recorded as violations.
+        assert len(guard.violations) == 3
+        reasons = {v["reason"] for v in guard.violations}
+        assert "handler is active but inbound chat_id is missing" in reasons
+        for v in guard.violations:
+            assert v["active_inbound_chat_id"] is None
+    finally:
+        guard.reset(token)
+
+    # After reset, inactive again — verify_send is unrestricted.
+    assert guard.is_active is False
+    assert guard.active_chat_id is None
+    assert guard.verify_send(C_HOME) is True
+
+
+def test_pin_none_also_blocks_via_module_singleton():
+    """Same sentinel semantics must hold for the module-level
+    singleton used by production call sites (SlackAdapter, delivery,
+    stream_consumer)."""
+    guard = get_global_guard()
+    guard.clear_violations()
+    token = pin_inbound(None)
+    try:
+        assert guard.is_active is True
+        assert guard.active_chat_id is None
+        # Misroute attempt via singleton: refused.
+        assert verify_outbound(C_HOME) is False
+        assert verify_outbound(C_WORLDARCH) is False
+        assert verify_outbound(None) is False
+        assert len(guard.violations) == 3
+    finally:
+        unpin_inbound(token)
+    # After unpin: no handler active, all sends allowed.
+    assert guard.is_active is False
+    assert verify_outbound(C_HOME) is True
+
+
+def test_active_chat_id_distinguishes_inactive_from_pin_none():
+    """`active_chat_id` returns None in BOTH "no handler" and "handler
+    pinned None". The two states are only distinguishable via
+    `is_active`. This is the public API contract — callers that care
+    about the difference must use `is_active`."""
+    guard = OutboundGuard()
+    assert guard.is_active is False
+    assert guard.active_chat_id is None
+
+    token = guard.enter(None)
+    try:
+        assert guard.is_active is True
+        assert guard.active_chat_id is None  # same value, different state
+    finally:
+        guard.reset(token)
+
+    assert guard.is_active is False
+    assert guard.active_chat_id is None
 
 
 def test_per_instance_contextvar_is_not_shared_between_guards():

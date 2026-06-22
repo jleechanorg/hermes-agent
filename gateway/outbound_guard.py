@@ -48,6 +48,24 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 
+# Sentinel used to represent the "no active handler" state in the
+# `_active_chat_id` ContextVar. We can't use `None` for that purpose
+# because `None` is also a legitimate *pinned* value: when a handler
+# fires but `source.chat_id` is missing or unparseable, `pin_inbound(None)`
+# is the correct record that "this handler is active but its inbound
+# chat_id is unknown" — and we must REFUSE any send through that
+# handler (the original incident class includes sends that target the
+# wrong channel OR no channel at all because upstream code forgot to
+# thread `source.chat_id` through).
+#
+# Using a unique sentinel for the "truly inactive" state lets the
+# guard distinguish:
+#   * `_NO_ACTIVE_INBOUND` (no handler is running) → allow the send
+#   * `None` (active handler, missing inbound chat_id) → refuse
+#   * `"C0AH3RY3DK6"` (active handler with valid chat_id) → enforce
+_NO_ACTIVE_INBOUND: object = object()
+
+
 @dataclass
 class OutboundGuard:
     """Tracks the active inbound chat_id and verifies outbound send alignment.
@@ -69,8 +87,19 @@ class OutboundGuard:
     # with state. Each instance creates its own ContextVar in __post_init__
     # so the field is per-instance; the *value* the ContextVar holds is
     # task-local regardless.
+    #
+    # The value is `object` (not `Optional[str]`) because the guard
+    # needs to distinguish THREE states, not two:
+    #   * `_NO_ACTIVE_INBOUND` — no handler is running; sends are allowed
+    #   * `None`              — handler is running but its inbound chat_id
+    #                           is missing/unknown; sends are REFUSED
+    #   * `"C..."`            — handler is running with a valid chat_id;
+    #                           sends are enforced
+    # Using a 2-state (Optional[str]) representation would conflate the
+    # first two and silently allow sends through a handler that has no
+    # idea what channel to target.
     violations: List[dict] = field(default_factory=list)
-    _active_chat_id: Optional[contextvars.ContextVar[Optional[str]]] = field(
+    _active_chat_id: Optional[contextvars.ContextVar[object]] = field(
         default=None, init=False, repr=False, compare=False
     )
     _guard_name: str = field(default="outbound_guard", init=False, repr=False)
@@ -79,8 +108,11 @@ class OutboundGuard:
         # Create a per-instance ContextVar. The name must be unique across
         # the process for contextvars to disambiguate, so we derive it
         # from id(self) to avoid any collision if multiple guards exist.
+        # The default is the `_NO_ACTIVE_INBOUND` sentinel — "truly
+        # inactive, no handler running".
         self._active_chat_id = contextvars.ContextVar(
-            f"outbound_guard_active_chat_id_{id(self)}", default=None
+            f"outbound_guard_active_chat_id_{id(self)}",
+            default=_NO_ACTIVE_INBOUND,
         )
 
     def enter(self, chat_id: Optional[str]):
@@ -88,6 +120,12 @@ class OutboundGuard:
 
         Returns a `ResetToken` (ContextVar token) — call `reset(token)`
         in a `finally` block to restore the previous pinned chat_id.
+
+        Passing `None` is allowed and means "handler is active but its
+        inbound chat_id is missing/unknown" — verify_send will then
+        refuse any subsequent outbound as unverifiable. To mark
+        "no handler is running", leave the guard untouched (the
+        default state of the ContextVar is `_NO_ACTIVE_INBOUND`).
         """
         return self._active_chat_id.set(chat_id)
 
@@ -97,8 +135,24 @@ class OutboundGuard:
 
     @property
     def active_chat_id(self) -> Optional[str]:
-        """The currently-pinned inbound chat_id, or None if no handler is active."""
-        return self._active_chat_id.get()
+        """The currently-pinned inbound chat_id, or None if either no
+        handler is active OR a handler is active but its inbound
+        chat_id is missing. Use `is_active` to disambiguate the two.
+        """
+        value = self._active_chat_id.get()
+        if value is _NO_ACTIVE_INBOUND:
+            return None
+        return value
+
+    @property
+    def is_active(self) -> bool:
+        """True iff a handler has called `enter()` for the current task.
+
+        Distinguishes "no handler running" (False) from "handler
+        running with missing/unknown chat_id" (True, with
+        `active_chat_id is None`).
+        """
+        return self._active_chat_id.get() is not _NO_ACTIVE_INBOUND
 
     def verify_send(
         self,
@@ -109,35 +163,51 @@ class OutboundGuard:
     ) -> bool:
         """Verify that `chat_id` matches the active inbound chat_id.
 
-        Returns True if the send is aligned (or no inbound is pinned —
-        which means this is a non-handler-triggered send like a startup
-        notification or a shutdown ping, both of which are allowed to
-        target the home channel).
+        Returns True in any of:
+          * No handler is active (default ContextVar state) — startup,
+            shutdown, cron, and other non-handler-triggered sends are
+            allowed to target the home channel.
+          * `chat_id` matches the pinned inbound chat_id.
+          * `chat_id` is in `allowed_extra_destinations` (opt-out for
+            intentional cross-channel workflows).
 
-        Returns False if a chat_id is pinned AND the send's chat_id
-        does not match — including the case where the send's chat_id is
-        None (an unverifiable destination while a handler is active).
-        The mismatch is recorded in `self.violations` and logged at
-        WARNING level.
+        Returns False (records a violation) when:
+          * A handler is active and `chat_id` is None (no destination
+            to verify) — refused as unverifiable.
+          * A handler is active and `chat_id` is non-None but does NOT
+            match the pinned inbound — refused as misroute.
 
         `allowed_extra_destinations` lets specific call sites (like
         the home-channel startup notification) opt out of the check
         even when a handler is active.
         """
         pinned = self._active_chat_id.get()
-        if pinned is None:
-            # No handler is active — this is a startup/shutdown/cron send.
-            # Startup notifications and shutdown pings are allowed to
-            # target the home channel because there is no inbound to be
-            # misaligned with.
+        if pinned is _NO_ACTIVE_INBOUND:
+            # No handler is active — this is a startup/shutdown/cron
+            # send. Startup notifications and shutdown pings are
+            # allowed to target the home channel because there is no
+            # inbound to be misaligned with.
             return True
+        if pinned is None:
+            # A handler called `enter(None)` — the handler is active
+            # but its inbound chat_id is missing. Refuse every outbound
+            # because we cannot verify alignment.
+            violation = {
+                "operation": operation,
+                "active_inbound_chat_id": None,
+                "outbound_chat_id": chat_id,
+                "reason": "handler is active but inbound chat_id is missing",
+            }
+            self.violations.append(violation)
+            logger.warning(
+                "Refusing outbound: handler is active but inbound chat_id "
+                "is missing (operation=%s outbound=%s)",
+                operation, chat_id,
+            )
+            return False
         if chat_id is None:
-            # Inbound is pinned but the send has no destination. Treating
-            # this as a silent bypass defeats the regression guard
-            # (the original incident involved sends that targeted the
-            # WRONG channel; the next class of bug is sends that target
-            # NO channel because some upstream code forgot to thread it
-            # through). Record and refuse.
+            # A handler is active with a valid pinned chat_id, but the
+            # send has no destination. Refuse as unverifiable.
             violation = {
                 "operation": operation,
                 "active_inbound_chat_id": pinned,

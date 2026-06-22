@@ -911,6 +911,23 @@ class GatewayStreamConsumer:
             # set in tandem with _draft_id in run().  Disable to be safe.
             self._use_draft_streaming = False
             return False
+        # OutboundGuard: refuse draft frames if the adapter's chat_id does
+        # not match the inbound that triggered the run (cross-channel
+        # misroute defense — see gateway/outbound_guard.py).
+        try:
+            from gateway.outbound_guard import verify_outbound
+            if not verify_outbound(self.chat_id, operation="stream_consumer.send_draft"):
+                logger.debug(
+                    "Refused _send_draft_frame: chat_id does not match active "
+                    "inbound (OutboundGuard); disabling draft streaming"
+                )
+                self._use_draft_streaming = False
+                return False
+        except Exception:
+            logger.debug(
+                "OutboundGuard.verify_outbound raised in _send_draft_frame; ignoring",
+                exc_info=True,
+            )
         try:
             result = await self.adapter.send_draft(
                 chat_id=self.chat_id,
