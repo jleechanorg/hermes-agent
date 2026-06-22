@@ -42,10 +42,20 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Deque, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# Cap on retained violations per guard instance. The guard is long-lived
+# (the process-wide singleton `_global_guard` lives for the entire
+# gateway process), and a misbehaving handler could in theory accumulate
+# thousands of `verify_send()` failures per second if it spins in a loop.
+# Retaining only the most recent N keeps memory bounded while preserving
+# enough diagnostic context for an operator inspecting a recent incident.
+MAX_VIOLATION_HISTORY = 256
 
 
 # Sentinel used to represent the "no active handler" state in the
@@ -98,7 +108,9 @@ class OutboundGuard:
     # Using a 2-state (Optional[str]) representation would conflate the
     # first two and silently allow sends through a handler that has no
     # idea what channel to target.
-    violations: List[dict] = field(default_factory=list)
+    violations: Deque[dict] = field(
+        default_factory=lambda: deque(maxlen=MAX_VIOLATION_HISTORY)
+    )
     _active_chat_id: Optional[contextvars.ContextVar[object]] = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -243,6 +255,13 @@ class OutboundGuard:
     def clear_violations(self) -> None:
         """Reset the violation list (used by tests to assert a clean run)."""
         self.violations.clear()
+
+    @property
+    def violation_count(self) -> int:
+        """Number of violations currently retained (bounded by
+        `MAX_VIOLATION_HISTORY`). Exposed for diagnostics and tests.
+        """
+        return len(self.violations)
 
 
 # ---------------------------------------------------------------------------

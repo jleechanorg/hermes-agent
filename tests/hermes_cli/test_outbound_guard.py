@@ -71,7 +71,7 @@ def test_enter_then_verify_same_chat_id_passes():
     try:
         assert guard.active_chat_id == C_WORLDARCH
         assert guard.verify_send(C_WORLDARCH) is True
-        assert guard.violations == []
+        assert guard.violation_count == 0
     finally:
         guard.reset(token)
 
@@ -112,7 +112,7 @@ def test_no_pinned_chat_id_means_unrestricted_send():
     assert guard.active_chat_id is None
     assert guard.verify_send(C_HOME) is True
     assert guard.verify_send(C_WORLDARCH) is True
-    assert guard.violations == []
+    assert guard.violation_count == 0
 
 
 def test_allowed_extra_destinations_opt_out():
@@ -145,9 +145,9 @@ def test_clear_violations_resets_list():
     try:
         guard.verify_send(C_HOME)
         guard.verify_send(C_HOME)
-        assert len(guard.violations) == 2
+        assert guard.violation_count == 2
         guard.clear_violations()
-        assert guard.violations == []
+        assert guard.violation_count == 0
     finally:
         guard.reset(token)
 
@@ -433,3 +433,50 @@ def test_real_slack_send_with_misaligned_chat_id_is_refused():
         assert mock_client.chat_postMessage.await_count == 0
 
     asyncio.run(_run())
+
+
+def test_violations_list_is_bounded(monkeypatch):
+    """Regression: the violations retention must be bounded so a
+    misbehaving handler cannot grow the deque without limit and exhaust
+    process memory. Verify that after >MAX_VIOLATION_HISTORY violations,
+    only the most recent MAX_VIOLATION_HISTORY entries are retained.
+    """
+    from gateway.outbound_guard import MAX_VIOLATION_HISTORY, OutboundGuard
+
+    # Use a smaller cap so the test stays fast and is deterministic.
+    monkeypatch.setattr(
+        "gateway.outbound_guard.MAX_VIOLATION_HISTORY", 16
+    )
+
+    guard = OutboundGuard()
+    # Pin a known inbound chat_id so every verify_send mismatches.
+    token = guard.enter(C_WORLDARCH)
+    try:
+        # Generate MAX_VIOLATION_HISTORY + 50 violations.
+        total = 16 + 50
+        for _ in range(total):
+            assert guard.verify_send(C_HOME) is False
+        # Bounded retention: only the most recent MAX entries survive.
+        assert guard.violation_count == 16
+        # Every retained violation is a misalignment (the most recent class).
+        assert all(v["outbound_chat_id"] == C_HOME for v in guard.violations)
+    finally:
+        guard.reset(token)
+
+
+def test_violations_clear_works_with_bounded_deque():
+    """Regression: clear_violations() must still work when violations is
+    a bounded deque (the historical API used list.clear()).
+    """
+    from gateway.outbound_guard import OutboundGuard
+
+    guard = OutboundGuard()
+    token = guard.enter(C_WORLDARCH)
+    try:
+        for _ in range(5):
+            assert guard.verify_send(C_HOME) is False
+        assert guard.violation_count == 5
+        guard.clear_violations()
+        assert guard.violation_count == 0
+    finally:
+        guard.reset(token)
