@@ -165,6 +165,16 @@ class TestHandleVisionAnalyzeFastPath:
             lambda _provider, _model: True,
         )
 
+        # Force the fast-path second gate on, regardless of provider registry
+        # state. Without this, CI environments that have an empty/missing
+        # provider capability map fall through to vision_analyze_tool (the
+        # aux-LLM text path), which then fails with
+        # "No LLM provider configured for task=vision provider=auto".
+        monkeypatch.setattr(
+            "tools.vision_tools._supports_media_in_tool_results",
+            lambda _provider, _model: True,
+        )
+
         # Set runtime override so the handler thinks we're on opus@openrouter
         from agent.auxiliary_client import set_runtime_main, clear_runtime_main
         set_runtime_main("openrouter", "anthropic/claude-opus-4.6")
