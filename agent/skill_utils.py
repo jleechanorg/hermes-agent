@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from hermes_constants import get_config_path, get_skills_dir
+from hermes_constants import get_canonical_skills_root, get_config_path, get_skills_dir
 
 logger = logging.getLogger(__name__)
 
@@ -271,13 +271,41 @@ def get_external_skills_dirs() -> List[Path]:
 
 
 def get_all_skills_dirs() -> List[Path]:
-    """Return all skill directories: local ``~/.hermes/skills/`` first, then external.
+    """Return all skill directories: profile local, canonical git root, then external.
 
-    The local dir is always first (and always included even if it doesn't exist
-    yet — callers handle that).  External dirs follow in config order.
+    The profile local dir is always first (and always included even if it
+    doesn't exist yet — callers handle that). The canonical git-tracked skills
+    root follows for same-user workstation profiles or explicit
+    HERMES_SKILLS_DIR overrides, so skill_manage writes remain discoverable
+    without leaking the user's real ~/.hermes/skills into arbitrary custom
+    roots and tests. External dirs follow in config order.
     """
-    dirs = [get_skills_dir()]
-    dirs.extend(get_external_skills_dirs())
+    profile_skills_dir = get_skills_dir()
+    canonical_skills_root = get_canonical_skills_root()
+    candidates = [profile_skills_dir]
+
+    include_canonical = bool(os.environ.get("HERMES_SKILLS_DIR", "").strip())
+    if not include_canonical:
+        try:
+            profile_skills_dir.parent.resolve().relative_to(Path.home().resolve())
+            include_canonical = True
+        except (OSError, ValueError):
+            include_canonical = False
+    if include_canonical:
+        candidates.append(canonical_skills_root)
+    candidates.extend(get_external_skills_dirs())
+
+    dirs = []
+    seen: Set[Path] = set()
+    for candidate in candidates:
+        try:
+            key = candidate.resolve()
+        except OSError:
+            key = candidate.absolute()
+        if key in seen:
+            continue
+        seen.add(key)
+        dirs.append(candidate)
     return dirs
 
 

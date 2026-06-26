@@ -39,13 +39,34 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import display_hermes_home, get_canonical_skills_root
 from typing import Dict, Any, Optional, Tuple
 
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
 
 logger = logging.getLogger(__name__)
+
+
+def _get_canonical_skills_root() -> Path:
+    """Return the canonical git-tracked skills directory.
+
+    Skills always live in ``~/.hermes/skills/`` (the git repo) so that
+    ``skill_manage`` writes are version-controlled and deployable via
+    ``scripts/deploy.sh`` rather than bypassing the repo entirely.
+
+    This is intentionally decoupled from ``HERMES_HOME``: prod-profile sessions
+    set ``HERMES_HOME=/Users/jleechan/.hermes_prod`` for runtime isolation,
+    but that does NOT mean agent-authored skills should land in prod
+    unversioned. Without this decoupling, a prod-profile ``skill_manage``
+    call writes to ``~/.hermes_prod/skills/`` and never enters the git
+    history of the staging repo (silent data loss in the deploy pipeline).
+
+    Override via the ``HERMES_SKILLS_DIR`` env var for tests and non-default
+    deployments (Docker, CI). The default is correct for every supported
+    profile on macOS/Linux workstations.
+    """
+    return get_canonical_skills_root()
 
 # Import security scanner — external hub installs always get scanned;
 # agent-created skills only get scanned when skills.guard_agent_created is on.
@@ -104,9 +125,13 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
 import yaml
 
 
-# All skills live in ~/.hermes/skills/ (single source of truth)
-HERMES_HOME = get_hermes_home()
-SKILLS_DIR = HERMES_HOME / "skills"
+# All skills live in ~/.hermes/skills/ (single source of truth — git-tracked).
+# CRITICAL: do NOT derive this from HERMES_HOME. Prod-profile sessions set
+# HERMES_HOME=~/.hermes_prod for runtime isolation, but skill authoring must
+# always go to the staging git repo so changes flow through scripts/deploy.sh.
+# See _get_canonical_skills_root() for the rationale and HERMES_SKILLS_DIR
+# override for tests/Docker/CI.
+SKILLS_DIR = _get_canonical_skills_root()
 
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024

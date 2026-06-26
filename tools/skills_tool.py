@@ -69,7 +69,11 @@ Usage:
 import json
 import logging
 
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import (
+    display_hermes_home,
+    get_canonical_skills_root,
+    get_hermes_home,
+)
 import os
 import re
 from enum import Enum
@@ -82,11 +86,11 @@ from hermes_cli.config import cfg_get
 logger = logging.getLogger(__name__)
 
 
-# All skills live in ~/.hermes/skills/ (seeded from bundled skills/ on install).
-# This is the single source of truth -- agent edits, hub installs, and bundled
-# skills all coexist here without polluting the git repo.
+# All agent-authored skills live in the canonical git-tracked skills root.
+# Runtime profiles may use a different HERMES_HOME, but skill reads must stay
+# aligned with skill_manage writes so created skills remain viewable/loadable.
 HERMES_HOME = get_hermes_home()
-SKILLS_DIR = HERMES_HOME / "skills"
+SKILLS_DIR = get_canonical_skills_root()
 
 # Anthropic-recommended limits for progressive disclosure efficiency
 MAX_NAME_LENGTH = 64
@@ -1530,4 +1534,3 @@ registry.register(
     check_fn=check_skills_requirements,
     emoji="📚",
 )
-
