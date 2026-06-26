@@ -698,7 +698,7 @@ Warnings are injected into the last tool result's JSON (as a `_budget_warning` f
 
 ```yaml
 agent:
-  max_turns: 90                # Max iterations per conversation turn (default: 90)
+  max_turns: 1000              # Max iterations per conversation turn (default: 1000)
   api_max_retries: 3           # Retries per provider before fallback engages (default: 3)
 ```
 
