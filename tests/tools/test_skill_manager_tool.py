@@ -24,6 +24,8 @@ from tools.skill_manager_tool import (
     VALID_NAME_RE,
     ALLOWED_SUBDIRS,
     MAX_NAME_LENGTH,
+    _get_canonical_skills_root,
+    SKILLS_DIR,
 )
 
 
@@ -943,3 +945,101 @@ class TestPinnedGuard:
                        side_effect=RuntimeError("sidecar broken")):
                 result = _delete_skill("my-skill")
         assert result["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# Canonical-skills-root guard — skill_manage must write to the git-tracked
+# ~/.hermes/skills/ even when HERMES_HOME points at a non-default profile
+# (e.g. HERMES_HOME=~/.hermes_prod for prod isolation). Without this guard,
+# prod-profile skill_manage calls silently bypass git and write into the
+# runtime prod tree, never entering the staging repo's history. See the
+# incident that landed this fix (cmux-find-workspace-by-topic /
+# cmux-mcp-server-options stranded in ~/.hermes_prod/skills/ on 2026-06-25).
+# ---------------------------------------------------------------------------
+
+class TestCanonicalSkillsRoot:
+    """SKILLS_DIR is the git-tracked staging root, not HERMES_HOME/skills."""
+
+    def test_default_resolves_to_git_root(self, monkeypatch, tmp_path):
+        """With no env override, _get_canonical_skills_root() is ~/.hermes/skills/.
+
+        Note: SKILLS_DIR is bound at import time, so we cannot change HOME
+        after import. We verify the helper function honors a fresh HOME
+        (which is what an early import in a test env would see), and we
+        confirm SKILLS_DIR was bound when the real (or test) HOME was
+        ~/.hermes/ — which is the case in every supported deployment.
+        """
+        # Confirm SKILLS_DIR was bound to ~/.hermes/skills/ (or its test
+        # equivalent) at import time. In CI it may be /Users/jleechan/.hermes
+        # (developer home), in a Docker sandbox it could be anything — but
+        # it MUST NOT be ~/.hermes_prod/skills/.
+        assert str(SKILLS_DIR).endswith("/.hermes/skills")
+        assert ".hermes_prod" not in str(SKILLS_DIR)
+
+        # For a fresh HOME, _get_canonical_skills_root() returns the right thing.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("HERMES_SKILLS_DIR", raising=False)
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        assert _get_canonical_skills_root() == tmp_path / ".hermes" / "skills"
+
+    def test_prod_home_does_not_redirect_skill_writes(
+        self, monkeypatch, tmp_path
+    ):
+        """HERMES_HOME=~/.hermes_prod must NOT change where skills land.
+
+        The bug this prevents: a prod-profile agent session sees
+        HERMES_HOME=~/.hermes_prod, and SKILLS_DIR was derived from that
+        env var, so skill_manage('create', ...) wrote to
+        ~/.hermes_prod/skills/ — outside the git repo entirely. Now
+        SKILLS_DIR ignores HERMES_HOME and stays at the canonical git
+        root, so writes are always version-controlled and deployable
+        via scripts/deploy.sh.
+        """
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes_prod"))
+        monkeypatch.delenv("HERMES_SKILLS_DIR", raising=False)
+        canonical = _get_canonical_skills_root()
+        assert canonical == tmp_path / ".hermes" / "skills"
+        # And the prod home is NOT in the resolved path.
+        assert ".hermes_prod" not in str(canonical)
+
+    def test_override_env_var_wins(self, monkeypatch, tmp_path):
+        """HERMES_SKILLS_DIR override lets tests/Docker/CI redirect the root."""
+        custom = tmp_path / "custom-skills-root"
+        monkeypatch.setenv("HERMES_SKILLS_DIR", str(custom))
+        monkeypatch.setenv("HOME", str(tmp_path / "ignored-home"))
+        assert _get_canonical_skills_root() == custom
+
+    def test_create_writes_to_canonical_root_not_hermes_home(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """End-to-end: skill_manage('create') in a prod-profile session
+        writes to the git root, not the runtime prod home."""
+        # Set up a sandboxed home with both ~/.hermes (git) and
+        # ~/.hermes_prod (runtime). Patch get_all_skills_dirs so _find_skill
+        # only sees the git root (matches what the real env looks like
+        # once SKILLS_DIR points there).
+        home = tmp_path
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("HERMES_HOME", str(home / ".hermes_prod"))
+        monkeypatch.delenv("HERMES_SKILLS_DIR", raising=False)
+        git_root = home / ".hermes" / "skills"
+        prod_root = home / ".hermes_prod" / "skills"
+
+        with patch(
+            "tools.skill_manager_tool.SKILLS_DIR", git_root
+        ), patch(
+            "agent.skill_utils.get_all_skills_dirs", return_value=[git_root]
+        ):
+            result = skill_manage(
+                action="create", name="new-skill", content=VALID_SKILL_CONTENT
+            )
+
+        import json as _json
+        parsed = _json.loads(result)
+        assert parsed["success"] is True, parsed
+
+        # Skill MUST live in the git root.
+        assert (git_root / "new-skill" / "SKILL.md").exists()
+        # Skill MUST NOT live in the prod runtime tree.
+        assert not (prod_root / "new-skill").exists()
