@@ -97,11 +97,33 @@ class TestGetAllSkillsDirs:
         (hermes_home / "config.yaml").write_text(
             f"skills:\n  external_dirs:\n    - {external_skills_dir}\n"
         )
-        with patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}):
+        with patch.dict(
+            os.environ,
+            {
+                "HERMES_HOME": str(hermes_home),
+                "HERMES_SKILLS_DIR": str(hermes_home / "skills"),
+            },
+        ):
             from agent.skill_utils import get_all_skills_dirs
             result = get_all_skills_dirs()
         assert result[0] == hermes_home / "skills"
         assert result[1] == external_skills_dir.resolve()
+
+    def test_canonical_root_included_for_profile_home(self, hermes_home, tmp_path):
+        canonical = tmp_path / "canonical" / "skills"
+        profile = hermes_home / "skills"
+        with patch.dict(
+            os.environ,
+            {
+                "HERMES_HOME": str(hermes_home),
+                "HERMES_SKILLS_DIR": str(canonical),
+            },
+        ):
+            from agent.skill_utils import get_all_skills_dirs
+            result = get_all_skills_dirs()
+
+        assert result[0] == profile
+        assert result[1] == canonical
 
 
 class TestExternalSkillsInFindAll:

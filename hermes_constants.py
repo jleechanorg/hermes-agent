@@ -288,6 +288,18 @@ def get_skills_dir() -> Path:
     return get_hermes_home() / "skills"
 
 
+def get_canonical_skills_root() -> Path:
+    """Return the canonical git-tracked skills directory.
+
+    Agent-authored skills should land in the staging git root even when
+    HERMES_HOME points at a runtime profile such as ~/.hermes_prod.
+    HERMES_SKILLS_DIR remains the explicit override for tests, Docker, and CI.
+    """
+    override = os.environ.get("HERMES_SKILLS_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / ".hermes" / "skills"
+
 
 def get_env_path() -> Path:
     """Return the path to the ``.env`` file under HERMES_HOME."""

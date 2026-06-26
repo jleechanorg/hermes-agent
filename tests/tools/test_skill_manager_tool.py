@@ -1043,3 +1043,21 @@ class TestCanonicalSkillsRoot:
         assert (git_root / "new-skill" / "SKILL.md").exists()
         # Skill MUST NOT live in the prod runtime tree.
         assert not (prod_root / "new-skill").exists()
+
+    def test_find_skill_reads_canonical_root_with_profile_home(
+        self, monkeypatch, tmp_path
+    ):
+        """Collision checks must see canonical skills from profile sessions."""
+        profile_root = tmp_path / ".hermes_prod" / "skills"
+        canonical_root = tmp_path / ".hermes" / "skills"
+        skill_dir = canonical_root / "existing-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(VALID_SKILL_CONTENT)
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes_prod"))
+        monkeypatch.setenv("HERMES_SKILLS_DIR", str(canonical_root))
+
+        found = _find_skill("existing-skill")
+
+        assert found == {"path": skill_dir}
+        assert not profile_root.exists()

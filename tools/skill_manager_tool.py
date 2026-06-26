@@ -39,7 +39,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from hermes_constants import display_hermes_home
+from hermes_constants import display_hermes_home, get_canonical_skills_root
 from typing import Dict, Any, Optional, Tuple
 
 from utils import atomic_replace, is_truthy_value
@@ -66,10 +66,7 @@ def _get_canonical_skills_root() -> Path:
     deployments (Docker, CI). The default is correct for every supported
     profile on macOS/Linux workstations.
     """
-    override = os.environ.get("HERMES_SKILLS_DIR", "").strip()
-    if override:
-        return Path(override)
-    return Path.home() / ".hermes" / "skills"
+    return get_canonical_skills_root()
 
 # Import security scanner — external hub installs always get scanned;
 # agent-created skills only get scanned when skills.guard_agent_created is on.
