@@ -257,3 +257,5 @@ scripts/run_tests.sh
 MIT — see [LICENSE](LICENSE).
 
 Built by [Nous Research](https://nousresearch.com).
+
+<!-- 2026-06-28: forked fresh from NousResearch/hermes-agent; see https://github.com/jleechanorg/hermes-agent_archive_june28_2026 for the previous fork history. -->
