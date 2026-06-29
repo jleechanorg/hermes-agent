@@ -1,0 +1,7 @@
+name: immediate_ack
+version: 1.0.0
+description: "Post a text acknowledgement ('On it…' by default) to Slack channels/threads when the gateway starts processing a user-originated message. Gated by `platforms.slack.extra.immediate_ack`. Replaces the ack with ✅ on success or ❌ on failure at session end."
+author: "jleechanorg"
+hooks:
+  - pre_gateway_dispatch
+  - on_session_end
