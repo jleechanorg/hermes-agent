@@ -18,7 +18,6 @@ from gateway.channel_directory import (
 )
 
 
-<<<<<<< HEAD
 import pytest
 
 
@@ -31,12 +30,12 @@ def _isolate_channel_aliases(tmp_path_factory):
     missing = tmp_path_factory.mktemp("aliases") / "none.json"
     with patch("gateway.channel_directory.CHANNEL_ALIASES_PATH", missing):
         yield
-=======
+
+
 def _resolve_strict(platform_name, target_ref):
     """Lazy import so tests can run while resolve_channel_name_strict is being added."""
     from gateway.channel_directory import resolve_channel_name_strict
     return resolve_channel_name_strict(platform_name, target_ref)
->>>>>>> a052c35e9 (fix(slack): prevent cross-workspace channel name misroute in channel_directory (#31))
 
 
 def _write_directory(tmp_path, platforms):

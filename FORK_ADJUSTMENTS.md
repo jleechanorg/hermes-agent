@@ -22,11 +22,11 @@ Each entry: what changed, why, upstream PR status, how to verify removal is safe
 
 ---
 
-### 2. `gateway/platforms/slack.py` — config-driven bot loop prevention
+### 2. `plugins/platforms/slack/adapter.py` — config-driven bot loop prevention
 
 | Field | Value |
 |-------|-------|
-| File | `gateway/platforms/slack.py` |
+| File | `plugins/platforms/slack/adapter.py` |
 | Commits | `1edbea4de`, `9543613fc`, `38cadf794`, `current` |
 | Category | feature/config |
 | Upstream PR | ready to file — generic, no hardcoded IDs |
@@ -36,23 +36,15 @@ Each entry: what changed, why, upstream PR status, how to verify removal is safe
 Fix: `SLACK_LOOP_BLOCK_USERS`, `SLACK_LOOP_BLOCK_BOTS`, `SLACK_LOOP_BLOCK_NAMES` env vars.
 Our specific IDs live in `~/Library/LaunchAgents/ai.hermes.prod.plist`.
 
-**Verify safe to remove:** `grep SLACK_LOOP_BLOCK gateway/platforms/slack.py` — if upstream has it, our patch is redundant but env vars still work.
+**Verify safe to remove:** `grep SLACK_LOOP_BLOCK plugins/platforms/slack/adapter.py` — if upstream has it, our patch is redundant but env vars still work.
 
 ---
 
-### 3. `gateway/status.py` — macOS `_get_process_start_time` support
+## Superseded upstream
 
-| Field | Value |
-|-------|-------|
-| File | `gateway/status.py` |
-| Commit | `0ac71e12b` |
-| Category | bug-fix / portability |
-| Upstream PR | filed as PR #16 |
-| Removable when | upstream PR #16 merges |
+### `gateway/status.py` — macOS `_get_process_start_time` support
 
-**Root cause:** `_get_process_start_time` used Linux-only `/proc` — crashed on macOS.
-
-**Verify:** `grep -n 'proc\|darwin\|platform' gateway/status.py | head -5`
+Superseded: `origin/main` already includes the psutil `Process(pid).create_time()` fallback for platforms without `/proc`.
 
 ---
 
@@ -62,7 +54,9 @@ Our specific IDs live in `~/Library/LaunchAgents/ai.hermes.prod.plist`.
 |------|--------|
 | `.github/workflows/green-gate.yml` | Our 6-gate CI harness — project-specific |
 | `.github/workflows/skeptic-cron.yml` | Our auto-merge cron — project-specific |
+| `.github/workflows/hermes-pr-tag-listener.yml` | Our shared-org PR tag listener dispatch — project-specific |
 | `.coderabbit.yaml` | Our CR config |
+| `gateway/outbound_guard.py` | Local cross-channel outbound misroute guard for our Slack/operator routing |
 | `optional-skills/` RTK plugin | Env-specific (RTK token rewriting) |
 | `.gitignore` additions | AO session files — harmless upstream but unnecessary |
 
