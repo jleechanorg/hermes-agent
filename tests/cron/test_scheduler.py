@@ -1016,6 +1016,83 @@ class TestRunJobSessionPersistence:
         kwargs = mock_agent_cls.call_args.kwargs
         assert kwargs["enabled_toolsets"] == ["terminal"]
 
+    def test_resolve_live_mcp_toolsets_returns_mcp_prefixed_only(self):
+        """Only ``mcp-*`` toolsets should be returned — never built-in ones.
+
+        Regression guard for the Mizraim cron regression (2026-07-02):
+        ``conversations_add_message`` lived under ``mcp-slack`` and was
+        missing from the cron agent's enabled_toolsets.
+        """
+        from cron.scheduler import _resolve_live_mcp_toolsets
+
+        fake_entries = [
+            MagicMock(toolset="mcp-slack"),
+            MagicMock(toolset="mcp-github"),
+            MagicMock(toolset="hermes-cli"),
+            MagicMock(toolset="terminal"),
+            MagicMock(toolset=None),
+        ]
+        # ``registry`` is lazily imported inside _resolve_live_mcp_toolsets,
+        # so patch the source module, not cron.scheduler's namespace.
+        with patch("tools.registry.registry") as mock_registry:
+            mock_registry._snapshot_entries.return_value = fake_entries
+            result = _resolve_live_mcp_toolsets()
+        assert result == {"mcp-slack", "mcp-github"}
+
+    def test_resolve_live_mcp_toolsets_swallows_registry_errors(self):
+        """If the registry import or snapshot raises, return an empty set.
+
+        ``_resolve_cron_enabled_toolsets`` unions this with the platform
+        toolsets — a missing/empty MCP union must NOT block the platform
+        toolsets from being returned.
+        """
+        from cron.scheduler import _resolve_live_mcp_toolsets
+
+        with patch("tools.registry.registry") as mock_registry:
+            mock_registry._snapshot_entries.side_effect = RuntimeError("boom")
+            result = _resolve_live_mcp_toolsets()
+        assert result == set()
+
+    def test_run_job_unions_live_mcp_toolsets_into_cron_platform_config(self, tmp_path):
+        """When the platform config returns cron toolsets, MCP toolsets
+        registered in the tool registry are UNIONED in.
+
+        Regression test for Mizraim PA-registration reminder (cron job
+        ``d87ec0ac5c92``) which had ``enabled_toolsets=null`` and relied on
+        the platform default. Before the fix, ``mcp-slack`` was missing,
+        so ``conversations_add_message`` was not exposed to the cron agent
+        and the job reported "no posting tool" (see
+        ``~/.hermes/cron/output/d87ec0ac5c92/2026-07-02_09-01-15.md``).
+        """
+        job = {
+            "id": "mcp-slack-job",
+            "name": "test",
+            "prompt": "post a reminder to #life",
+        }
+        fake_db, patches = self._make_run_job_patches(tmp_path)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             patch("run_agent.AIAgent") as mock_agent_cls, \
+             patch(
+                 "hermes_cli.tools_config._get_platform_tools",
+                 return_value={"web", "file", "memory"},
+             ), \
+             patch(
+                 "cron.scheduler._resolve_live_mcp_toolsets",
+                 return_value={"mcp-slack", "mcp-github"},
+             ):
+            mock_agent = MagicMock()
+            mock_agent.run_conversation.return_value = {"final_response": "ok"}
+            mock_agent_cls.return_value = mock_agent
+            run_job(job)
+
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert "mcp-slack" in kwargs["enabled_toolsets"]
+        assert "mcp-github" in kwargs["enabled_toolsets"]
+        # Platform toolsets must still be present — union, not replace
+        assert "web" in kwargs["enabled_toolsets"]
+        assert "file" in kwargs["enabled_toolsets"]
+        assert "memory" in kwargs["enabled_toolsets"]
+
     def test_run_job_empty_response_returns_empty_not_placeholder(self, tmp_path):
         """Empty final_response should stay empty for delivery logic (issue #2234).
 

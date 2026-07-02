@@ -55,15 +55,48 @@ class CronPromptInjectionBlocked(Exception):
     """
 
 
+def _resolve_live_mcp_toolsets() -> set[str]:
+    """Return MCP toolsets (``mcp-<server>``) registered in the tool registry.
+
+    MCP servers connect lazily and register their tools under a per-server
+    ``mcp-<name>`` toolset (``tools/mcp_tool.py:_register_server_tools``).
+    These toolsets are NOT part of any preset composite (e.g. ``hermes-cli``,
+    ``hermes-cron``) and are NOT surfaced by ``_get_platform_tools`` — but a
+    cron job that needs to deliver to Slack/Discord/etc. via MCP (instead of
+    the gateway send_message path, which is disabled in cron) needs them.
+
+    Lazy-import to avoid loading the registry at cron module import time.
+    Returns an empty set if the registry is not yet initialised or the
+    import fails for any reason — callers treat empty as "no MCP toolsets
+    available", which is a no-op for the union below.
+    """
+    try:
+        from tools.registry import registry
+    except Exception:
+        return set()
+    try:
+        toolsets = {
+            entry.toolset
+            for entry in registry._snapshot_entries()
+            if entry.toolset and entry.toolset.startswith("mcp-")
+        }
+        return toolsets
+    except Exception:
+        return set()
+
+
 def _resolve_cron_enabled_toolsets(job: dict, cfg: dict) -> list[str] | None:
     """Resolve the toolset list for a cron job.
 
     Precedence:
     1. Per-job ``enabled_toolsets`` (set via ``cronjob`` tool on create/update).
        Keeps the agent's job-scoped toolset override intact — #6130.
-    2. Per-platform ``hermes tools`` config for the ``cron`` platform.
-       Mirrors gateway behavior (``_get_platform_tools(cfg, platform_key)``)
-       so users can gate cron toolsets globally without recreating every job.
+    2. Per-platform ``hermes tools`` config for the ``cron`` platform,
+       UNION any live ``mcp-*`` toolsets registered in the tool registry
+       so cron jobs can call MCP tools (e.g. ``mcp-slack`` for posting
+       reminders). Mirrors gateway behavior — gateway unions MCP tools
+       implicitly; cron needs the same since cron disables the
+       ``messaging`` toolset.
     3. ``None`` on any lookup failure — AIAgent loads the full default set
        (legacy behavior before this change, preserved as the safety net).
 
@@ -71,19 +104,32 @@ def _resolve_cron_enabled_toolsets(job: dict, cfg: dict) -> list[str] | None:
     ``_get_platform_tools`` for unconfigured platforms, so fresh installs
     get cron WITHOUT ``moa`` by default (issue reported by Norbert —
     surprise $4.63 run).
+
+    MCP union rationale (``mcp-*`` always included on cron): MCP servers are
+    an explicit opt-in via ``mcp_servers`` in config.yaml — the user chose
+    to load them. Cron jobs that post to a Slack channel via MCP need the
+    matching ``mcp-slack`` toolset to be enabled; without this union, the
+    job sees only the gateway-blocked read-only Slack tools (regression
+    reported via Mizraim PA-registration reminder on 2026-07-02 — see
+    ~/.hermes/cron/output/d87ec0ac5c92/2026-07-02_09-01-15.md).
     """
     per_job = job.get("enabled_toolsets")
     if per_job:
         return per_job
     try:
         from hermes_cli.tools_config import _get_platform_tools  # lazy: avoid heavy import at cron module load
-        return sorted(_get_platform_tools(cfg or {}, "cron"))
+        resolved = set(_get_platform_tools(cfg or {}, "cron"))
     except Exception as exc:
         logger.warning(
             "Cron toolset resolution failed, falling back to full default toolset: %s",
             exc,
         )
         return None
+    # Always union MCP toolsets — see rationale above. ``mcp_servers`` is an
+    # explicit user opt-in, and cron disables ``messaging`` (gateway send)
+    # so any cron job that needs to post to a platform requires MCP access.
+    resolved |= _resolve_live_mcp_toolsets()
+    return sorted(resolved)
 
 # Valid delivery platforms — used to validate user-supplied platform names
 # in cron delivery targets, preventing env var enumeration via crafted names.
