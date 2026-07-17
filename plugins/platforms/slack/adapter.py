@@ -3122,10 +3122,21 @@ class SlackAdapter(BasePlatformAdapter):
                 if self._bot_user_id and f"<@{self._bot_user_id}>" not in text_check:
                     return
             # "all" falls through to process the message
-            # Always ignore our own messages to prevent echo loops
+            # Always ignore our own messages to prevent echo loops — UNLESS the
+            # message landed in a channel designated as an "alert channel" that
+            # should auto-respond even when the post came from our own bot
+            # identity (e.g. mcp__slack__* MCP Agent Mail alerts posted via the
+            # same xoxb token the gateway Slack plugin uses). Without this bypass
+            # alerts posted by sibling MCP tools (BQ coverage watcher, spend
+            # alert, dropped-thread-followup, etc.) are silently dropped at line
+            # 3127 because msg_user == self._bot_user_id. See:
+            # https://jleechanai.slack.com/archives/C0BCVG4F560/p1784219487851579
             msg_user = event.get("user", "")
+            msg_channel = event.get("channel", "")
             if msg_user and self._bot_user_id and msg_user == self._bot_user_id:
-                return
+                _auto_respond_channels = self._slack_auto_respond_channels()
+                if not (msg_channel and msg_channel in _auto_respond_channels):
+                    return
 
         # Ignore message edits and deletions
         subtype = event.get("subtype")
@@ -4787,6 +4798,48 @@ class SlackAdapter(BasePlatformAdapter):
             "yes",
             "on",
         }
+
+    def _slack_auto_respond_channels(self) -> set:
+        """Return channel IDs where self-posted bot alerts SHOULD auto-trigger a session.
+
+        Use this when the gateway Slack plugin shares its xoxb token with the
+        mcp__slack__* tool (so its own bot identity = the alert poster's bot
+        identity). Without this bypass, every alert posted by the alert cron is
+        dropped at the self-message guard. Wire it via config.yaml:
+
+            channels:
+              slack:
+                channels:
+                  C0BCVG4F560:
+                    auto_respond: true   # worldai-alerts — BQ/spend/coverage
+                  C0BDEAJH8PK:
+                    auto_respond: true   # worldai-bugs
+                  C0AKALZ4CKW:
+                    auto_respond: true   # ai-slack-test
+
+        or env:  SLACK_AUTO_RESPOND_CHANNELS="C0BCVG4F560,C0BDEAJH8PK"
+        """
+        # Prefer the channels.slack.channels map shape (per-channel dict) so
+        # operators get an explicit allow-list per channel.
+        ch_map = (self.config.extra.get("channels") or {})
+        if isinstance(ch_map, dict):
+            ids = {
+                cid
+                for cid, cfg in ch_map.items()
+                if isinstance(cfg, dict) and cfg.get("auto_respond") is True
+            }
+            if ids:
+                return ids
+        # Fallback: simple comma-separated list (legacy compatibility)
+        raw = self.config.extra.get("auto_respond_channels")
+        if raw is None:
+            raw = os.getenv("SLACK_AUTO_RESPOND_CHANNELS", "")
+        if isinstance(raw, list):
+            return {str(p).strip() for p in raw if str(p).strip()}
+        s = str(raw).strip() if raw is not None else ""
+        if s:
+            return {p.strip() for p in s.split(",") if p.strip()}
+        return set()
 
     def _slack_free_response_channels(self) -> set:
         """Return channel IDs where no @mention is required."""
