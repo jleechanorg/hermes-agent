@@ -2469,10 +2469,18 @@ class SlackAdapter(BasePlatformAdapter):
                 if self._bot_user_id and f"<@{self._bot_user_id}>" not in text_check:
                     return
             # "all" falls through to process the message
-            # Always ignore our own messages to prevent echo loops
+            # Same-user events are admitted only when their non-visible Slack
+            # metadata declares an explicitly configured event type.
             msg_user = event.get("user", "")
             if msg_user and self._bot_user_id and msg_user == self._bot_user_id:
-                return
+                metadata = event.get("metadata")
+                event_type = (
+                    metadata.get("event_type", "")
+                    if isinstance(metadata, dict)
+                    else ""
+                )
+                if event_type not in self._slack_self_message_event_types():
+                    return
 
             # Prevent loops between sibling bot instances (e.g. prod @hermes and staging @hermes_staging).
             # Block by user ID or bot ID only — NOT by app_id, which is too broad and
@@ -4060,6 +4068,16 @@ class SlackAdapter(BasePlatformAdapter):
             return {part.strip() for part in s.split(",") if part.strip()}
         return set()
 
+    def _slack_self_message_event_types(self) -> set:
+        """Return Slack metadata event types allowed from this bot identity."""
+        raw = self.config.extra.get("self_message_event_types")
+        if raw is None:
+            raw = os.getenv("SLACK_SELF_MESSAGE_EVENT_TYPES", "")
+        if isinstance(raw, list):
+            return {str(part).strip() for part in raw if str(part).strip()}
+        value = str(raw).strip() if raw is not None else ""
+        return {part.strip() for part in value.split(",") if part.strip()}
+
     def _slack_allowed_channels(self) -> set:
         """Return the whitelist of channel IDs the bot will respond in.
 
@@ -4362,6 +4380,11 @@ def _apply_yaml_config(yaml_cfg: dict, slack_cfg: dict) -> dict | None:
         if isinstance(frc, list):
             frc = ",".join(str(v) for v in frc)
         os.environ["SLACK_FREE_RESPONSE_CHANNELS"] = str(frc)
+    self_event_types = slack_cfg.get("self_message_event_types")
+    if self_event_types is not None and not os.getenv("SLACK_SELF_MESSAGE_EVENT_TYPES"):
+        if isinstance(self_event_types, list):
+            self_event_types = ",".join(str(v) for v in self_event_types)
+        os.environ["SLACK_SELF_MESSAGE_EVENT_TYPES"] = str(self_event_types)
     if "reactions" in slack_cfg and not os.getenv("SLACK_REACTIONS"):
         os.environ["SLACK_REACTIONS"] = str(slack_cfg["reactions"]).lower()
     ac = slack_cfg.get("allowed_channels")

@@ -2001,6 +2001,75 @@ class TestMessageRouting:
         await adapter._handle_slack_message(event)
         adapter.handle_message.assert_not_called()
 
+    @pytest.mark.parametrize("channel", ["C0AH3RY3DK6", "C0AMM2B4319"])
+    @pytest.mark.asyncio
+    async def test_configured_actionable_self_alert_is_processed(self, channel):
+        """Configured machine metadata admits alerts from the shared bot identity."""
+        config = PlatformConfig(
+            enabled=True,
+            token="xoxb-fake-token",
+            extra={
+                "allow_bots": "all",
+                "require_mention": False,
+                "self_message_event_types": ["hermes_actionable_alert"],
+            },
+        )
+        adapter = SlackAdapter(config)
+        adapter._app = MagicMock()
+        adapter._app.client = AsyncMock()
+        adapter._bot_user_id = "U0A4G7LDJ4R"
+        adapter._running = True
+        adapter.handle_message = AsyncMock()
+
+        await adapter._handle_slack_message(
+            {
+                "text": "Action required",
+                "user": "U0A4G7LDJ4R",
+                "bot_id": "B0A3MS7G08P",
+                "channel": channel,
+                "channel_type": "channel",
+                "ts": "1784908896.668679",
+                "metadata": {
+                    "event_type": "hermes_actionable_alert",
+                    "event_payload": {"source": "scheduled_harness"},
+                },
+            }
+        )
+
+        adapter.handle_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_unmarked_self_reply_remains_blocked(self):
+        """Ordinary output from the shared bot identity must not recurse."""
+        config = PlatformConfig(
+            enabled=True,
+            token="xoxb-fake-token",
+            extra={
+                "allow_bots": "all",
+                "require_mention": False,
+                "self_message_event_types": ["hermes_actionable_alert"],
+            },
+        )
+        adapter = SlackAdapter(config)
+        adapter._app = MagicMock()
+        adapter._app.client = AsyncMock()
+        adapter._bot_user_id = "U0A4G7LDJ4R"
+        adapter._running = True
+        adapter.handle_message = AsyncMock()
+
+        await adapter._handle_slack_message(
+            {
+                "text": "Working 3 min iteration 18/1000",
+                "user": "U0A4G7LDJ4R",
+                "bot_id": "B0A3MS7G08P",
+                "channel": "C0AH3RY3DK6",
+                "channel_type": "channel",
+                "ts": "1785114476.915829",
+            }
+        )
+
+        adapter.handle_message.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_message_edits_ignored(self, adapter):
         """Message edits should be ignored."""
