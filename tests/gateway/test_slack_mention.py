@@ -366,7 +366,9 @@ def test_config_bridges_slack_free_response_channels(monkeypatch, tmp_path):
         "  require_mention: false\n"
         "  free_response_channels:\n"
         "    - C0AQWDLHY9M\n"
-        "    - C9999999999\n",
+        "    - C9999999999\n"
+        "  self_message_event_types:\n"
+        "    - hermes_actionable_alert\n",
         encoding="utf-8",
     )
 
@@ -380,10 +382,12 @@ def test_config_bridges_slack_free_response_channels(monkeypatch, tmp_path):
     slack_extra = config.platforms[Platform.SLACK].extra
     assert slack_extra.get("require_mention") is False
     assert slack_extra.get("free_response_channels") == ["C0AQWDLHY9M", "C9999999999"]
+    assert slack_extra.get("self_message_event_types") == ["hermes_actionable_alert"]
     # Verify env vars were set by config bridging
     import os as _os
     assert _os.environ["SLACK_REQUIRE_MENTION"] == "false"
     assert _os.environ["SLACK_FREE_RESPONSE_CHANNELS"] == "C0AQWDLHY9M,C9999999999"
+    assert _os.environ["SLACK_SELF_MESSAGE_EVENT_TYPES"] == "hermes_actionable_alert"
 
 
 def test_top_level_slack_settings_do_not_disable_env_token_setup(monkeypatch, tmp_path):

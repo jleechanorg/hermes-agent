@@ -394,6 +394,25 @@ Set this to `true` in busy workspaces where Slack's default "the bot remembers t
 Slack supports both patterns: `@mention` required to start a conversation by default, but you can opt specific channels out via `SLACK_FREE_RESPONSE_CHANNELS` (comma-separated channel IDs) or `slack.free_response_channels` in `config.yaml`. Once the bot has an active session in a thread, subsequent thread replies do not require a mention. In DMs the bot always responds without needing a mention.
 :::
 
+### Same-identity automation alerts
+
+Hermes normally ignores messages posted by its own Slack identity to prevent
+reply loops. If a trusted automation posts through that same bot token, it can
+opt in specific
+[Slack message metadata event types](https://docs.slack.dev/messaging/message-metadata/)
+without admitting ordinary self-replies:
+
+```yaml
+slack:
+  self_message_event_types:
+    - "hermes_actionable_alert"
+```
+
+The publisher must set the matching `metadata.event_type` in its
+`chat.postMessage` payload. The default list is empty. The equivalent internal
+environment bridge is `SLACK_SELF_MESSAGE_EVENT_TYPES` with comma-separated
+event types.
+
 ### Channel allowlist (`allowed_channels`)
 
 Restrict the bot to a fixed set of Slack channels — useful when the bot is invited to many channels but should only respond in a few. When set, messages from channels NOT in this list are **silently ignored**, even if the bot is `@mentioned`.

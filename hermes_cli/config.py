@@ -2239,6 +2239,7 @@ DEFAULT_CONFIG = {
     "slack": {
         "require_mention": True,       # Require @mention to respond in channels
         "free_response_channels": "",  # Comma-separated channel IDs where bot responds without mention
+        "self_message_event_types": [],  # Slack metadata event types allowed from this bot identity
         "allowed_channels": "",        # If set, bot ONLY responds in these channel IDs (whitelist)
         "channel_prompts": {},         # Per-channel ephemeral system prompts
     },
