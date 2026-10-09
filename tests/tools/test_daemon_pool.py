@@ -73,3 +73,29 @@ def _repo_root():
     import pathlib
 
     return pathlib.Path(__file__).resolve().parents[2]
+
+
+def test_worker_context_protocol_is_forwarded(monkeypatch):
+    from tools import daemon_pool
+
+    context = object()
+    captured = []
+    finished = threading.Event()
+
+    def worker(*args):
+        captured.append(args)
+        finished.set()
+
+    monkeypatch.setattr(daemon_pool, "_worker", worker)
+    pool = DaemonThreadPoolExecutor(max_workers=1)
+    monkeypatch.setattr(pool, "_create_worker_context", lambda: context, raising=False)
+    try:
+        pool._adjust_thread_count()
+        assert finished.wait(timeout=5)
+        assert len(captured[0]) == 3
+        assert captured[0][1] is context
+        assert captured[0][2] is pool._work_queue
+        assert all(thread.daemon for thread in pool._threads)
+        assert all(thread not in _threads_queues for thread in pool._threads)
+    finally:
+        pool.shutdown(wait=True)

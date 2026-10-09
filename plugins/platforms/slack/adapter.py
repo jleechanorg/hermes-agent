@@ -67,6 +67,45 @@ except ImportError:  # pragma: no cover - plugin loaded outside package context
 
 logger = logging.getLogger(__name__)
 
+
+def _slack_guard_check(
+    chat_id: Optional[str],
+    *,
+    operation: str,
+    allowed_extra_destinations: Optional[List[str]] = None,
+) -> bool:
+    """Module-level helper that calls `verify_outbound` for every Slack
+    write path. Centralises the guard invocation so the same try/except
+    envelope is applied to send(), send_private_notice(), _upload_file(),
+    send_image_file(), send_image(), send_voice(), send_video(),
+    send_document(), send_multiple_images(), send_exec_approval(),
+    send_slash_confirm(), and any future write path.
+
+    Returns True if the write is allowed; False if it is refused (the
+    caller should return a failed `SendResult` without performing the
+    underlying Slack API call).
+
+    Guard exceptions are best-effort: a raised exception is logged at
+    debug level and the write is allowed through (we never block a
+    real send because of an internal guard error).
+    """
+    try:
+        from gateway.outbound_guard import verify_outbound
+        return verify_outbound(
+            chat_id,
+            platform="slack",
+            operation=operation,
+            allowed_extra_destinations=allowed_extra_destinations,
+        )
+    except Exception:
+        logger.debug(
+            "OutboundGuard.verify_outbound raised in %s; allowing send",
+            operation,
+            exc_info=True,
+        )
+        return True
+
+
 # User-Agent prefix for outbound Slack API calls so platform partners can
 # identify HermesAgent traffic — matching other Hermes outbound surfaces
 # that already set ``HermesAgent/<version>`` for platform-partner attribution.
@@ -2338,8 +2377,11 @@ class SlackAdapter(BasePlatformAdapter):
 
     def _get_client(self, chat_id: str, team_id: Optional[str] = None) -> Any:
         """Return the workspace-specific WebClient for a channel."""
-        if team_id and team_id in self._team_clients:
-            return self._team_clients[team_id]
+        if team_id:
+            client = self._team_clients.get(team_id)
+            if client is None:
+                raise ValueError(f"Slack workspace {team_id} is not connected; refusing fallback")
+            return client
         team_id = self._channel_team.get(chat_id)
         if team_id and team_id in self._team_clients:
             return self._team_clients[team_id]
@@ -2452,6 +2494,19 @@ class SlackAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="ignored_channel")
         if not self._app:
             return SendResult(success=False, error="Not connected")
+
+        # Regression guard for the 2026-06-19 11:20:58–11:22:32 UTC
+        # cross-channel misroute (orphan 1781868147.039389 in
+        # C0AJQ5M0A0Y while inbound was from C0AH3RY3DK6). When a handler
+        # is active and the inbound chat_id is pinned, refuse to post to
+        # a different channel — record a violation and return an error
+        # SendResult instead of letting the misalignment reach Slack.
+        # See gateway/outbound_guard.py for the protocol.
+        if not _slack_guard_check(chat_id, operation="slack.send"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
 
         chat_id = await self._ensure_dm_conversation(
             chat_id, team_id=self._metadata_team_id(metadata)
@@ -2639,6 +2694,11 @@ class SlackAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
         if not chat_id or not user_id:
             return SendResult(success=False, error="chat_id and user_id are required")
+        if not _slack_guard_check(chat_id, operation="slack.send_private_notice"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
 
         try:
             formatted = self.format_message(content)
@@ -3179,6 +3239,12 @@ class SlackAdapter(BasePlatformAdapter):
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
+        if not _slack_guard_check(chat_id, operation="slack.upload_file"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
+
         chat_id = await self._ensure_dm_conversation(
             chat_id, team_id=self._metadata_team_id(metadata)
         )
@@ -3236,6 +3302,13 @@ class SlackAdapter(BasePlatformAdapter):
         if not self._app:
             return
         if not images:
+            return
+
+        if not _slack_guard_check(chat_id, operation="slack.send_multiple_images"):
+            logger.warning(
+                "[Slack] Refused send_multiple_images: chat_id does not match "
+                "active inbound (OutboundGuard)"
+            )
             return
 
         chat_id = await self._ensure_dm_conversation(
@@ -4008,6 +4081,11 @@ class SlackAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Send a local image file to Slack by uploading it."""
+        if not _slack_guard_check(chat_id, operation="slack.send_image_file"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
         try:
             return await self._upload_file(
                 chat_id, image_path, caption, reply_to, metadata
@@ -4041,6 +4119,12 @@ class SlackAdapter(BasePlatformAdapter):
         """Send an image to Slack by uploading the URL as a file."""
         if not self._app:
             return SendResult(success=False, error="Not connected")
+
+        if not _slack_guard_check(chat_id, operation="slack.send_image"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
 
         from tools.url_safety import create_ssrf_safe_async_client, is_safe_url
 
@@ -4110,6 +4194,11 @@ class SlackAdapter(BasePlatformAdapter):
         **kwargs,
     ) -> SendResult:
         """Send an audio file to Slack."""
+        if not _slack_guard_check(chat_id, operation="slack.send_voice"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
         try:
             return await self._upload_file(
                 chat_id, audio_path, caption, reply_to, metadata
@@ -4142,6 +4231,12 @@ class SlackAdapter(BasePlatformAdapter):
         if not os.path.exists(video_path):
             return SendResult(
                 success=False, error=f"Video file not found: {video_path}"
+            )
+
+        if not _slack_guard_check(chat_id, operation="slack.send_video"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
             )
 
         chat_id = await self._ensure_dm_conversation(
@@ -4206,6 +4301,12 @@ class SlackAdapter(BasePlatformAdapter):
 
         if not os.path.exists(file_path):
             return SendResult(success=False, error=f"File not found: {file_path}")
+
+        if not _slack_guard_check(chat_id, operation="slack.send_document"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
 
         display_name = file_name or os.path.basename(file_path)
         thread_ts = self._resolve_thread_ts(reply_to, metadata)
@@ -5339,6 +5440,31 @@ class SlackAdapter(BasePlatformAdapter):
             if msg_user and self._bot_user_id and msg_user == self._bot_user_id:
                 return
 
+            # Prevent loops between sibling bot instances (e.g. prod @hermes and staging @hermes_staging).
+            # Block by user ID or bot ID only — NOT by app_id, which is too broad and
+            # would also block human users posting via XOXP tokens associated with the same app.
+            # Configure via env vars to avoid hardcoding instance-specific IDs in source:
+            #   SLACK_LOOP_BLOCK_USERS  — comma-separated Slack user IDs to block
+            #   SLACK_LOOP_BLOCK_BOTS   — comma-separated bot_id values to block
+            #   SLACK_LOOP_BLOCK_NAMES  — comma-separated bot display names to block (case-insensitive)
+            msg_bot_id = event.get("bot_id", "")
+            msg_username = (event.get("username") or "").lower().strip()
+
+            _block_users = {u.strip() for u in os.getenv("SLACK_LOOP_BLOCK_USERS", "").split(",") if u.strip()}
+            _block_bots = {b.strip() for b in os.getenv("SLACK_LOOP_BLOCK_BOTS", "").split(",") if b.strip()}
+            _block_names = {n.strip().lower() for n in os.getenv("SLACK_LOOP_BLOCK_NAMES", "").split(",") if n.strip()}
+
+            if (
+                (msg_user and msg_user in _block_users) or
+                (msg_bot_id and msg_bot_id in _block_bots) or
+                (msg_username and msg_username in _block_names)
+            ):
+                logger.info(
+                    "Slack Adapter: Ignoring loop-prone message from blocked bot instance: "
+                    "user=%s, bot_id=%s, username=%s",
+                    msg_user, msg_bot_id, msg_username
+                )
+                return
         # Ignore message deletions. Edits are normalized above so an @mention
         # added by edit can still wake the bot once.
         subtype = event.get("subtype")
@@ -6361,6 +6487,12 @@ class SlackAdapter(BasePlatformAdapter):
         if not self._app:
             return SendResult(success=False, error="Not connected")
 
+        if not _slack_guard_check(chat_id, operation="slack.send_exec_approval"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
+
         chat_id = await self._ensure_dm_conversation(
             chat_id, team_id=self._metadata_team_id(metadata)
         )
@@ -6460,6 +6592,12 @@ class SlackAdapter(BasePlatformAdapter):
         """Send a Block Kit three-option slash-command confirmation prompt."""
         if not self._app:
             return SendResult(success=False, error="Not connected")
+
+        if not _slack_guard_check(chat_id, operation="slack.send_slash_confirm"):
+            return SendResult(
+                success=False,
+                error="refused: outbound chat_id does not match active inbound (OutboundGuard)",
+            )
 
         chat_id = await self._ensure_dm_conversation(
             chat_id, team_id=self._metadata_team_id(metadata)
@@ -8576,6 +8714,30 @@ async def _standalone_upload_file(
     return {"success": True, "message_id": message_id, "raw": result}
 
 
+async def _slack_token_matches_workspace(token: str, team_id: str) -> bool:
+    """Verify a configured token's workspace before any standalone write."""
+    try:
+        import aiohttp
+        from gateway.platforms.base import proxy_kwargs_for_aiohttp
+
+        session_kwargs, request_kwargs = proxy_kwargs_for_aiohttp(resolve_proxy_url())
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15), **session_kwargs
+        ) as session:
+            async with session.post(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {token}"},
+                **request_kwargs,
+            ) as response:
+                if response.status != 200:
+                    return False
+                identity = await response.json()
+                return identity.get("ok") is True and identity.get("team_id") == team_id
+    except Exception:
+        logger.debug("Slack workspace token verification failed", exc_info=True)
+        return False
+
+
 async def _standalone_send(
     pconfig,
     chat_id,
@@ -8585,6 +8747,7 @@ async def _standalone_send(
     media_files=None,
     force_document=False,
     caption=None,
+    team_id="",
 ):
     """Out-of-process Slack delivery via the Web API.
 
@@ -8601,6 +8764,10 @@ async def _standalone_send(
     ``force_document`` is accepted for signature parity but unused — Slack
     treats every upload as a generic file share.
 
+    An explicit workspace selects its saved OAuth token. If no saved mapping
+    exists, a configured token must match that workspace via ``auth.test``
+    before any text, DM-open, or upload request is made.
+
     When ``caption`` is set (single captionable MEDIA:<path> + short text), the
     text rides as ``initial_comment`` on the upload instead of a separate
     ``chat.postMessage``.
@@ -8614,18 +8781,35 @@ async def _standalone_send(
     # each token individually instead of sending the literal comma-joined
     # string, which Slack rejects as ``invalid_auth`` (#47547).
     tokens = [t.strip() for t in str(raw_token or "").split(",") if t.strip()]
+    mapped_workspace_token = False
     try:
         from hermes_constants import get_hermes_home
 
         _tokens_file = get_hermes_home() / "slack_tokens.json"
         if _tokens_file.exists():
             _saved = json.loads(_tokens_file.read_text(encoding="utf-8"))
-            for _entry in _saved.values():
+            if team_id:
+                _entry = _saved.get(team_id)
+                _tok = _entry.get("token", "") if isinstance(_entry, dict) else ""
+                if _tok:
+                    tokens = [_tok]
+                    mapped_workspace_token = True
+            for _entry in ([] if team_id else _saved.values()):
                 _tok = _entry.get("token", "") if isinstance(_entry, dict) else ""
                 if _tok and _tok not in tokens:
                     tokens.append(_tok)
     except Exception:
-        pass
+        if team_id:
+            return {"error": f"Cross-channel Slack routing refused: invalid token mapping for workspace {team_id}"}
+    if team_id and not mapped_workspace_token:
+        selected_token = None
+        for candidate in tokens:
+            if await _slack_token_matches_workspace(candidate, team_id):
+                selected_token = candidate
+                break
+        if selected_token is None:
+            return {"error": f"Cross-channel Slack routing refused: no verified token for workspace {team_id}"}
+        tokens = [selected_token]
     if not tokens:
         return {"error": "Slack send failed: SLACK_BOT_TOKEN not configured"}
     token = tokens[0]
@@ -8832,6 +9016,8 @@ async def _standalone_send(
                 last_error = data.get("error", "unknown")
                 if last_error not in retryable_token_errors:
                     break
+        if team_id and last_error == "channel_not_found":
+            return {"error": f"Cross-channel Slack routing failed for workspace {team_id}, channel {chat_id}: {last_error}"}
         return {"error": f"Slack API error: {last_error}"}
     except Exception as e:
         return {"error": f"Slack send failed: {e}"}

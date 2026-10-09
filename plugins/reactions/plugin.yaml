@@ -1,0 +1,24 @@
+name: reactions
+version: 1.0.0
+description: |
+  Slack reaction lifecycle plugin: places 👀 eyes reaction on inbound user-originated messages at processing start, then swaps for ✅ white_check_mark on success or ❌ x on failure/cancellation at session end. Migrated from the old jleechanorg fork's gateway/platforms/slack.py reaction state machine (lines 1305-1331, 1379-1400, 2216-2221, 2318) — preserved as an isolated plugin per the upstream-first policy (upstream NousResearch/hermes-agent has no equivalent).
+author: jleechanorg
+hooks:
+  - pre_gateway_dispatch
+  - on_session_end
+config_schema:
+  reactions_enabled:
+    type: bool
+    default: true
+  reactions_eyes_emoji:
+    type: str
+    default: "eyes"
+  reactions_success_emoji:
+    type: str
+    default: "white_check_mark"
+  reactions_failure_emoji:
+    type: str
+    default: "x"
+  reactions_require_dm_or_mention:
+    type: bool
+    default: true

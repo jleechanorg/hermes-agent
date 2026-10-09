@@ -1095,6 +1095,39 @@ class TestVisionClientFallback:
 
 
 class TestAuxiliaryPoolAwareness:
+    def test_try_nous_uses_pool_entry(self):
+        pooled_token = _jwt_with_claims({
+            "scope": "inference:invoke",
+            "exp": int(time.time() + 3600),
+        })
+
+        class _Entry:
+            access_token = "pooled-access-token"
+            agent_key = pooled_token
+            agent_key_expires_at = "2099-01-01T00:00:00+00:00"
+            scope = "inference:invoke"
+            inference_base_url = "https://inference.pool.example/v1"
+
+        class _Pool:
+            def has_credentials(self):
+                return True
+
+            def select(self):
+                return _Entry()
+
+        with (
+            patch("agent.auxiliary_client.load_pool", return_value=_Pool()),
+            patch("hermes_cli.models.get_nous_recommended_aux_model", return_value="google/gemini-3-flash-preview"),
+            patch("agent.auxiliary_client.OpenAI") as mock_openai,
+        ):
+            from agent.auxiliary_client import _try_nous
+
+            client, model = _try_nous()
+
+        assert client is not None
+        assert model == "google/gemini-3-flash-preview"
+        assert mock_openai.call_args.kwargs["api_key"] == pooled_token
+        assert mock_openai.call_args.kwargs["base_url"] == "https://inference.pool.example/v1"
 
     def test_try_nous_refreshes_stale_pool_entry(self):
         stale_token = _jwt_with_claims({

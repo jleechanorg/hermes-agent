@@ -1,4 +1,15 @@
-# Calls the org-owned reusable @hermes listener at an immutable revision.
+# Calls the reusable @hermes mention listener from jleechanorg/.github.
+# Fires on PR open/edit, issue_comment, PR review_comment, and repository_dispatch
+# events. The repository_dispatch event (type=hermes-task-completed) is fired by
+# the AO worker (or any consumer) when the work is done — the reusable workflow
+# then posts the final completion comment on the PR.
+#
+# Required repo secret:
+#   HERMES_SLACK_WEBHOOK_URL — incoming webhook for the target Slack channel
+#
+# Permissions note: pull-requests: write + issues: write are required for the
+# reusable workflow to add the 👀 ack reaction and post the ack comment.
+
 name: hermes-pr-tag-listener
 
 on:
@@ -13,14 +24,14 @@ on:
 
 permissions:
   contents: read
-  issues: write
   pull-requests: write
+  issues: write
 
 jobs:
   notify:
     uses: jleechanorg/.github/.github/workflows/hermes-pr-tag-listener.yml@3f9707627da75e55a79d13518c6cfb886a10ead6
     with:
-      slack_channel: ${{ vars.HERMES_SLACK_CHANNEL || '#ai-general' }}
+      slack_channel: ${{ vars.HERMES_SLACK_CHANNEL || '#worldai-bugs' }}
       dispatch_ao: 'false'
     secrets:
       slack_webhook_url: ${{ secrets.HERMES_SLACK_WEBHOOK_URL }}
